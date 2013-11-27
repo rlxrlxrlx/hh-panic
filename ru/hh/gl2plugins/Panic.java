@@ -17,7 +17,7 @@ import static org.apache.commons.lang3.StringEscapeUtils.escapeHtml4;
 import static java.nio.file.StandardCopyOption.*;
 
 public class Panic implements MessageOutput {
-    private class LogEntry {
+    private static class LogEntry {
         Integer level;
         Integer count;
         String streams;
@@ -29,6 +29,44 @@ public class Panic implements MessageOutput {
         }
     }
 
+    /* http://www.catalysoft.com/articles/StrikeAMatch.html */
+    private static double compareStrings(String str1, String str2) {
+        ArrayList pairs1 = wordLetterPairs(str1.toUpperCase());
+        ArrayList pairs2 = wordLetterPairs(str2.toUpperCase());
+        int intersection = 0;
+        int union = pairs1.size() + pairs2.size();
+        for (Object pair1 : pairs1) {
+            for (int j = 0; j < pairs2.size(); j++) {
+                Object pair2 = pairs2.get(j);
+                if (pair1.equals(pair2)) {
+                    intersection++;
+                    pairs2.remove(j);
+                    break;
+                }
+            }
+        }
+        return (2.0 * intersection) / union;
+    }
+
+    private static ArrayList wordLetterPairs(String str) {
+        ArrayList<String> allPairs = new ArrayList<String>();
+        String[] words = str.split("\\s");
+        for (String word : words) {
+            String[] pairsInWord = letterPairs(word);
+            Collections.addAll(allPairs, pairsInWord);
+        }
+        return allPairs;
+    }
+
+    private static String[] letterPairs(String str) {
+        int numPairs = Math.max(0, str.length() - 1);
+        String[] pairs = new String[numPairs];
+        for (int i = 0; i < numPairs; i++) {
+            pairs[i] = str.substring(i, i + 2);
+        }
+        return pairs;
+    }
+
     public static final String NAME = "Panic";
 
     private static final int INTERVAL_SIZE = 120;
@@ -37,7 +75,7 @@ public class Panic implements MessageOutput {
     //private static ConcurrentHashMap<String, LogEntry> messageCounts = new ConcurrentHashMap<String, LogEntry>();
     private static ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>> intervals = new ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>>();
 
-    private String getStreamsString(List<Stream> streams) {
+    private static String getStreamsString(List<Stream> streams) {
         String res = "";
         for (Stream s : streams) {
             if (!(s.getTitle().equals("panic") && streams.size() > 1)) {
@@ -56,25 +94,31 @@ public class Panic implements MessageOutput {
 
     @Override
     public void write(List<LogMessage> messages, OutputStreamConfiguration streamConfiguration, GraylogServer server) throws Exception {
+        writeSync(messages, streamConfiguration, server);
+    }
+
+    private static void writeSync(List<LogMessage> messages, OutputStreamConfiguration streamConfiguration, GraylogServer server) throws Exception {
         // first run
         if (intervals.keySet().size() == 0) {
-            if (new File("/tmp/panic-www/saved-state").exists()) {
-                BufferedReader br = new BufferedReader(new FileReader("/tmp/panic-www/saved-state"));
-                String timestamp = br.readLine();
-                while (timestamp != null) {
-                    String message = br.readLine();
-                    Integer count = Integer.parseInt(br.readLine());
-                    Integer level = Integer.parseInt(br.readLine());
-                    String streams = br.readLine();
-                    Long stamp = Long.parseLong(timestamp);
-                    if (!intervals.containsKey(stamp)) {
-                        intervals.put(stamp, new ConcurrentHashMap<String, LogEntry>());
+            synchronized (NAME) {
+                if (new File("/tmp/panic-www/saved-state").exists()) {
+                    BufferedReader br = new BufferedReader(new FileReader("/tmp/panic-www/saved-state"));
+                    String timestamp = br.readLine();
+                    while (timestamp != null) {
+                        String message = br.readLine();
+                        Integer count = Integer.parseInt(br.readLine());
+                        Integer level = Integer.parseInt(br.readLine());
+                        String streams = br.readLine();
+                        Long stamp = Long.parseLong(timestamp);
+                        if (!intervals.containsKey(stamp)) {
+                            intervals.put(stamp, new ConcurrentHashMap<String, LogEntry>());
+                        }
+                        intervals.get(stamp).put(message, new LogEntry(level, count, streams));
+                        timestamp = br.readLine();
                     }
-                    intervals.get(stamp).put(message, new LogEntry(level, count, streams));
-                    timestamp = br.readLine();
+                    br.close();
+                    new File("/tmp/panic-www/saved-state").delete();
                 }
-                br.close();
-                new File("/tmp/panic-www/saved-state").delete();
             }
         }
         Long curTimestamp = new Date().getTime() / 1000;
@@ -83,6 +127,24 @@ public class Panic implements MessageOutput {
             for (LogMessage m : messages) {
                 if (m.getLevel() <= 4) {
                     String escaped = escapeHtml4(m.getShortMessage().replace('\n', ' ').replace('\r', ' ')).replaceAll("[0-9]", "");
+                    double similarity = 0;
+                    String similar = escaped;
+                    if (escaped.length() > 1) {
+                        for (Long key : intervals.keySet()) {
+                            for (String message : intervals.get(key).keySet()) {
+                                if (message.length() > 1) {
+                                    double new_similarity = compareStrings(escaped, message);
+                                    if (new_similarity > similarity) {
+                                        similarity = new_similarity;
+                                        similar = message;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (similarity > 0.8) {
+                        escaped = similar;
+                    }
 
                     if (!intervals.containsKey(curInterval)) {
                         intervals.put(curInterval, new ConcurrentHashMap<String, LogEntry>());
@@ -101,8 +163,8 @@ public class Panic implements MessageOutput {
 
             bw.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
             bw_lite.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
-            bw.write("<div class='container'><h2><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2><table class='table table-striped table-condenced'>");
-            bw_lite.write("<div class='container'><h2><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2><table class='table table-striped table-condenced'>");
+            bw.write("<div style='margin-left: 3%; margin-right: 3%;'><h2><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2><table class='table table-striped table-condenced'>");
+            bw_lite.write("<div style='margin-left: 3%; margin-right: 3%;'><h2><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2><table class='table table-striped table-condenced'>");
 
             bw.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
             bw_lite.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
@@ -149,29 +211,33 @@ public class Panic implements MessageOutput {
             Files.move(Paths.get("/tmp/panic-www/superpanic.html." + stamp), Paths.get("/tmp/panic-www/current-full.html"), ATOMIC_MOVE);
         }
         /* clean up intervals */
-        HashSet<Long> keysToRemove = new HashSet<Long>();
-        for (Long key : intervals.keySet()) {
-            if (key + INTERVAL_SIZE * SHOW_INTERVALS < curTimestamp) {
-                keysToRemove.add(key);
+        synchronized (NAME) {
+            HashSet<Long> keysToRemove = new HashSet<Long>();
+            for (Long key : intervals.keySet()) {
+                if (key + INTERVAL_SIZE * SHOW_INTERVALS < curTimestamp) {
+                    keysToRemove.add(key);
+                }
             }
-        }
-        for (Long key : keysToRemove) {
-            intervals.remove(key);
+            for (Long key : keysToRemove) {
+                intervals.remove(key);
+            }
         }
         /* save state for future use */
         if (new Random().nextInt(10) == 0) {
-            BufferedWriter bw = new BufferedWriter(new FileWriter("/tmp/panic-www/saved-state"));
-            for (Long key : intervals.keySet()) {
-                for (String message : intervals.get(key).keySet()) {
-                    LogEntry e = intervals.get(key).get(message);
-                    bw.write(key + "\n");
-                    bw.write(message + "\n");
-                    bw.write(e.count + "\n");
-                    bw.write(e.level + "\n");
-                    bw.write(e.streams + "\n");
+            synchronized (NAME) {
+                BufferedWriter bw = new BufferedWriter(new FileWriter("/tmp/panic-www/saved-state"));
+                for (Long key : intervals.keySet()) {
+                    for (String message : intervals.get(key).keySet()) {
+                        LogEntry e = intervals.get(key).get(message);
+                        bw.write(key + "\n");
+                        bw.write(message + "\n");
+                        bw.write(e.count + "\n");
+                        bw.write(e.level + "\n");
+                        bw.write(e.streams + "\n");
+                    }
                 }
+                bw.close();
             }
-            bw.close();
         }
     }
 
@@ -192,5 +258,9 @@ public class Panic implements MessageOutput {
     @Override
     public String getName() {
         return NAME;
+    }
+
+    public static void main(String[] args) {
+        System.out.println(compareStrings("Request to \"http://...:/tickets/resetPassword\" with params \"email\"=\"\", header \"X-Forwarded-For\"=\"...\", header \"X-Request-ID\"=\"dbbdfefffcbbaffe\" has returned HTTP status is \" Bad Request\", header \"X-HHID-War", "Request to \"http://...:/tickets/resetPassword\" with params \"email\"=\"\", header \"X-Forwarded-For\"=\"...\", header \"X-Request-ID\"=\"edbeabedbccefb\" has returned HTTP status is \" Bad Request\", header \"X-HHID-Wa"));
     }
 }
