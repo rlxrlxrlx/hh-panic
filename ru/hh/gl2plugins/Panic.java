@@ -93,32 +93,34 @@ public class Panic implements MessageOutput {
     }
 
     private static LinkedList<Map.Entry<String, LogEntry>> combineIntervals() {
-        HashMap<String, LogEntry> combined = new HashMap<String, LogEntry>();
-        for (Long key : intervals.keySet()) {
-            for (String message : intervals.get(key).keySet()) {
-                combined.put(message, combined.containsKey(message) ?
-                        new LogEntry(combined.get(message).level,
-                                combined.get(message).count + intervals.get(key).get(message).count,
-                                combined.get(message).streams.length() > intervals.get(key).get(message).streams.length() ?
-                                        combined.get(message).streams : intervals.get(key).get(message).streams,
-                                combined.get(message).substringForMatching
-                        )
-                        :
-                        intervals.get(key).get(message)
-                );
-            }
-        }
-        LinkedList<Map.Entry<String, LogEntry>> sorted = new LinkedList<Map.Entry<String, LogEntry>>(combined.entrySet());
-        Collections.sort(sorted, new Comparator<Map.Entry<String, LogEntry>>() {
-            @Override
-            public int compare(Map.Entry<String, LogEntry> o1, Map.Entry<String, LogEntry> o2) {
-                if (!o2.getValue().count.equals(o1.getValue().count)) {
-                    return o2.getValue().count.compareTo(o1.getValue().count);
+        synchronized (NAME) {
+            HashMap<String, LogEntry> combined = new HashMap<String, LogEntry>();
+            for (Long key : intervals.keySet()) {
+                for (String message : intervals.get(key).keySet()) {
+                    combined.put(message, combined.containsKey(message) ?
+                            new LogEntry(combined.get(message).level,
+                                    combined.get(message).count + intervals.get(key).get(message).count,
+                                    combined.get(message).streams.length() > intervals.get(key).get(message).streams.length() ?
+                                            combined.get(message).streams : intervals.get(key).get(message).streams,
+                                    combined.get(message).substringForMatching
+                            )
+                            :
+                            intervals.get(key).get(message)
+                    );
                 }
-                return o1.getKey().compareTo(o2.getKey());
             }
-        });
-        return sorted;
+            LinkedList<Map.Entry<String, LogEntry>> sorted = new LinkedList<Map.Entry<String, LogEntry>>(combined.entrySet());
+            Collections.sort(sorted, new Comparator<Map.Entry<String, LogEntry>>() {
+                @Override
+                public int compare(Map.Entry<String, LogEntry> o1, Map.Entry<String, LogEntry> o2) {
+                    if (!o2.getValue().count.equals(o1.getValue().count)) {
+                        return o2.getValue().count.compareTo(o1.getValue().count);
+                    }
+                    return o1.getKey().compareTo(o2.getKey());
+                }
+            });
+            return sorted;
+        }
     }
 
     private static void restoreState() throws IOException {
@@ -166,8 +168,8 @@ public class Panic implements MessageOutput {
 
         bw.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
         bwLite.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
-        bw.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2>&nbsp<span style='float:right;display:inline;'>" + (messageCountProcessed / ((new Date().getTime() - startedProcessing.getTime()) / 1000)) + " messages/sec</span><table class='table table-striped table-condenced'>");
-        bwLite.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2>&nbsp<span style='float:right;display:inline;'>" + (messageCountProcessed / ((new Date().getTime() - startedProcessing.getTime()) / 1000)) + " messages/sec</span><table class='table table-striped table-condenced'>");
+        bw.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2>&nbsp<span style='float:right;display:inline;'>" + (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) + " messages/sec</span><table class='table table-striped table-condenced'>");
+        bwLite.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2>&nbsp<span style='float:right;display:inline;'>" + (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) + " messages/sec</span><table class='table table-striped table-condenced'>");
 
         bw.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
         bwLite.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
@@ -190,12 +192,14 @@ public class Panic implements MessageOutput {
         Files.move(Paths.get(HTML_TEMP_FILE_PREFIX + stamp), Paths.get(HTML_FULL), ATOMIC_MOVE);
     }
 
-    private synchronized static void writeSync(List<LogMessage> messages) throws Exception {
-        if (startedProcessing == null) {
-            startedProcessing = new Date();
-        }
-        if (intervals.keySet().size() == 0) {
-            restoreState();
+    private static void writeSync(List<LogMessage> messages) throws Exception {
+        synchronized (NAME) {
+            if (startedProcessing == null) {
+                startedProcessing = new Date();
+            }
+            if (intervals.keySet().size() == 0) {
+                restoreState();
+            }
         }
         Long curTimestamp = new Date().getTime() / 1000;
         Long curInterval = curTimestamp - curTimestamp % INTERVAL_SIZE;
@@ -238,18 +242,20 @@ public class Panic implements MessageOutput {
             }
             generateHtmlWithEpicTemplateEngine();
         }
-        messageCountProcessed += messages.size();
-        /* clean up intervals */
-        HashSet<Long> keysToRemove = new HashSet<Long>();
-        for (Long key : intervals.keySet()) {
-            if (key + INTERVAL_SIZE * SHOW_INTERVALS < curTimestamp) {
-                keysToRemove.add(key);
+        synchronized (NAME) {
+            messageCountProcessed += messages.size();
+            /* clean up intervals */
+            HashSet<Long> keysToRemove = new HashSet<Long>();
+            for (Long key : intervals.keySet()) {
+                if (key + INTERVAL_SIZE * SHOW_INTERVALS < curTimestamp) {
+                    keysToRemove.add(key);
+                }
             }
+            for (Long key : keysToRemove) {
+                intervals.remove(key);
+            }
+            saveState();
         }
-        for (Long key : keysToRemove) {
-            intervals.remove(key);
-        }
-        saveState();
     }
 
     @Override
