@@ -30,6 +30,7 @@ public class Panic implements MessageOutput {
 
     private static Date startedProcessing = null;
     private static Long messageCountProcessed = 0L;
+    private static Long errWarnCountProcessed = 0L;
 
     private static ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>> intervals = new ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>>();
 
@@ -168,8 +169,20 @@ public class Panic implements MessageOutput {
 
         bw.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
         bwLite.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
-        bw.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2>&nbsp<span style='float:right;display:inline;'>" + (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) + " messages/sec</span><table class='table table-striped table-condenced'>");
-        bwLite.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" + new Date() + " </h2>&nbsp<span style='float:right;display:inline;'>" + (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) + " messages/sec</span><table class='table table-striped table-condenced'>");
+        bw.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" +
+                new Date() +
+                " </h2>&nbsp<span style='float:right;display:inline;'>" +
+                (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
+                " messages/sec, " +
+                (errWarnCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
+                " err&warns/sec</span><table class='table table-striped table-condenced'>");
+        bwLite.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" +
+                new Date() +
+                " </h2>&nbsp<span style='float:right;display:inline;'>" +
+                (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
+                " messages/sec, " +
+                (errWarnCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
+                " err&warns/sec</span><table class='table table-striped table-condenced'>");
 
         bw.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
         bwLite.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
@@ -203,20 +216,34 @@ public class Panic implements MessageOutput {
         }
         Long curTimestamp = new Date().getTime() / 1000;
         Long curInterval = curTimestamp - curTimestamp % INTERVAL_SIZE;
+        int errWarnCount = 0;
         if (messages.size() > 0) {
             LinkedList<Map.Entry<String, LogEntry>> existing = combineIntervals();
+
+            HashMap<String, LinkedList<Map.Entry<String, LogEntry>>> existingByFirstTwoLetters = new HashMap<String, LinkedList<Map.Entry<String, LogEntry>>>();
+            for (Map.Entry<String, LogEntry> e : existing) {
+                String theKey = e.getKey().substring(0, 2);
+                if (!existingByFirstTwoLetters.containsKey(theKey)) {
+                    existingByFirstTwoLetters.put(theKey, new LinkedList<Map.Entry<String, LogEntry>>());
+                }
+                existingByFirstTwoLetters.get(theKey).add(e);
+            }
+
             for (LogMessage m : messages) {
                 if (m.getLevel() <= 4 && !m.getShortMessage().startsWith("Error getting object ")) {
                     String escaped = escapeHtml4(m.getShortMessage().replace('\n', ' ').replace('\r', ' ')).replaceAll("[0-9]", "");
                     double bestSimilarity = 0;
                     String mostSimilar = escaped;
                     if (escaped.length() > 1) {
-                        for (Map.Entry<String, LogEntry> e : existing) {
-                            if (e.getKey().length() > 1) {
-                                double curSimilarity = compareStrings(escaped.substring(0, Math.min(escaped.length(), SUBSTRING_LENGTH)), e.getValue().substringForMatching);
-                                if (curSimilarity > bestSimilarity) {
-                                    bestSimilarity = curSimilarity;
-                                    mostSimilar = e.getKey();
+                        LinkedList<Map.Entry<String, LogEntry>> listToMatch = existingByFirstTwoLetters.get(escaped.substring(0, 2));
+                        if (listToMatch != null) {
+                            for (Map.Entry<String, LogEntry> e : listToMatch) {
+                                if (e.getKey().length() > 1) {
+                                    double curSimilarity = compareStrings(escaped.substring(0, Math.min(escaped.length(), SUBSTRING_LENGTH)), e.getValue().substringForMatching);
+                                    if (curSimilarity > bestSimilarity) {
+                                        bestSimilarity = curSimilarity;
+                                        mostSimilar = e.getKey();
+                                    }
                                 }
                             }
                         }
@@ -236,14 +263,16 @@ public class Panic implements MessageOutput {
                             new LogEntry(m.getLevel(), 1, getStreamsString(m.getStreams()), escaped.substring(0, Math.min(escaped.length(), SUBSTRING_LENGTH)));
                     intervals.get(curInterval).put(escaped, newEntry);
                     if (bestSimilarity <= MERGE_THRESHOLD) {
-                        existing.add(new AbstractMap.SimpleEntry<String, LogEntry>(escaped, newEntry));
+                        existingByFirstTwoLetters.get(escaped.substring(0, 2)).add(new AbstractMap.SimpleEntry<String, LogEntry>(escaped, newEntry));
                     }
+                    errWarnCount++;
                 }
             }
             generateHtmlWithEpicTemplateEngine();
         }
         synchronized (NAME) {
             messageCountProcessed += messages.size();
+            errWarnCountProcessed += errWarnCount;
             /* clean up intervals */
             HashSet<Long> keysToRemove = new HashSet<Long>();
             for (Long key : intervals.keySet()) {
@@ -254,7 +283,9 @@ public class Panic implements MessageOutput {
             for (Long key : keysToRemove) {
                 intervals.remove(key);
             }
-            saveState();
+            if (new Random().nextInt(3) == 0) {
+                saveState();
+            }
         }
     }
 
