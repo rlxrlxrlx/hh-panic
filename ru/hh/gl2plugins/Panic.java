@@ -203,15 +203,20 @@ public class Panic implements MessageOutput {
     }
 
     private static void writeSync(List<LogMessage> messages) throws Exception {
+        Long curTimestamp = new Date().getTime() / 1000;
         synchronized (NAME) {
             if (startedProcessing == null) {
                 startedProcessing = new Date();
+            }
+            else if (curTimestamp - startedProcessing.getTime() / 1000 > 600) {
+                messageCountProcessed = (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) * 30;
+                errWarnCountProcessed = (errWarnCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) * 30;
+                startedProcessing = new Date((curTimestamp - 30) * 1000);
             }
             if (intervals.keySet().size() == 0) {
                 restoreState();
             }
         }
-        Long curTimestamp = new Date().getTime() / 1000;
         Long curInterval = curTimestamp - curTimestamp % INTERVAL_SIZE;
         int errWarnCount = 0;
         if (messages.size() > 0) {
@@ -219,7 +224,7 @@ public class Panic implements MessageOutput {
 
             HashMap<String, LinkedList<Map.Entry<String, LogEntry>>> existingByFirstTwoLetters = new HashMap<String, LinkedList<Map.Entry<String, LogEntry>>>();
             for (Map.Entry<String, LogEntry> e : existing) {
-                String theKey = e.getKey().substring(0, 2);
+                String theKey = e.getKey().substring(0, Math.min(2, e.getKey().length()));
                 if (!existingByFirstTwoLetters.containsKey(theKey)) {
                     existingByFirstTwoLetters.put(theKey, new LinkedList<Map.Entry<String, LogEntry>>());
                 }
