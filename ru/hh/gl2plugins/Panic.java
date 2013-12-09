@@ -167,25 +167,22 @@ public class Panic implements MessageOutput {
         BufferedWriter bw = new BufferedWriter(new FileWriter(HTML_TEMP_FILE_PREFIX + stamp));
         BufferedWriter bwLite = new BufferedWriter(new FileWriter(HTML_TEMP_FILE_PREFIX + stamp + ".lite"));
 
-        bw.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
-        bwLite.write("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>");
-        bw.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" +
+        String header = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>";
+        bw.write(header);
+        bwLite.write(header);
+        String top = "<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" +
                 new Date() +
                 " </h2>&nbsp<span style='float:right;display:inline;'>" +
                 (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
                 " messages/sec, " +
                 (errWarnCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
-                " err&warns/sec</span><table class='table table-striped table-condenced'>");
-        bwLite.write("<div style='margin-left: 3%; margin-right: 3%;'><br/><h2 style='display:inline;'><a href='http://graylog.hh.ru'>GRAYLOG</a>&nbsp;&nbsp;&nbsp;" +
-                new Date() +
-                " </h2>&nbsp<span style='float:right;display:inline;'>" +
-                (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
-                " messages/sec, " +
-                (errWarnCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) +
-                " err&warns/sec</span><table class='table table-striped table-condenced'>");
+                " err&warns/sec</span><table class='table table-striped table-condenced'>";
+        bw.write(top);
+        bwLite.write(top);
 
-        bw.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
-        bwLite.write("<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>");
+        String flash = "<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>";
+        bw.write(flash);
+        bwLite.write(flash);
 
         LinkedList<Map.Entry<String, LogEntry>> sorted = combineIntervals();
 
