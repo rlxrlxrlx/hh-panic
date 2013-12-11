@@ -27,12 +27,18 @@ public class Panic implements MessageOutput {
     private static final String SAVED_STATE_FILE = "/tmp/panic-www/saved-state";
     private static final String HTML_LITE = "/tmp/panic-www/current.html";
     private static final String HTML_FULL = "/tmp/panic-www/current-full.html";
+    private static final int ERROR_REPORTING_THRESHOLD = 2000;
+    private static final int WARNING_REPORTING_THRESHOLD = 10000;
+    private static final int REPORTING_INTERVAL = 1000 * 60 * 2;
+    private static final String REPORTING_RECIPIENT = "a.rybalkin@hh.ru an.sumin@hh.ru a.panov@hh.ru n.miroshnichenko@hh.ru m.fedotov@hh.ru";
 
     private static Date startedProcessing = null;
     private static Long messageCountProcessed = 0L;
     private static Long errWarnCountProcessed = 0L;
+    private static Date lastTimeMessagesReported = null;
 
     private static ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>> intervals = new ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>>();
+    private static ConcurrentHashMap<String, Long> reportedMessages = new ConcurrentHashMap<String, Long>();
 
     private static class LogEntry {
         Integer level;
@@ -128,7 +134,7 @@ public class Panic implements MessageOutput {
         if (new File(SAVED_STATE_FILE).exists()) {
             BufferedReader br = new BufferedReader(new FileReader(SAVED_STATE_FILE));
             String timestamp = br.readLine();
-            while (timestamp != null) {
+            while (timestamp != null && !timestamp.equals("%%REPORTED_MESSAGES%%")) {
                 String message = br.readLine();
                 Integer count = Integer.parseInt(br.readLine());
                 Integer level = Integer.parseInt(br.readLine());
@@ -139,6 +145,14 @@ public class Panic implements MessageOutput {
                 }
                 intervals.get(stamp).put(message, new LogEntry(level, count, streams, message.substring(0, Math.min(message.length(), SUBSTRING_LENGTH))));
                 timestamp = br.readLine();
+            }
+            if (timestamp != null && timestamp.equals("%%REPORTED_MESSAGES%%")) {
+                String message = br.readLine();
+                while (message != null) {
+                    Long dateReported = Long.parseLong(br.readLine());
+                    reportedMessages.put(message, dateReported);
+                    message = br.readLine();
+                }
             }
             br.close();
             if (!new File(SAVED_STATE_FILE).delete()) {
@@ -158,6 +172,11 @@ public class Panic implements MessageOutput {
                 bw.write(e.level + "\n");
                 bw.write(e.streams + "\n");
             }
+        }
+        bw.write("%%REPORTED_MESSAGES%%\n");
+        for (String key : reportedMessages.keySet()) {
+            bw.write(key + "\n");
+            bw.write(reportedMessages.get(key) + "\n");
         }
         bw.close();
     }
@@ -202,11 +221,75 @@ public class Panic implements MessageOutput {
         Files.move(Paths.get(HTML_TEMP_FILE_PREFIX + stamp), Paths.get(HTML_FULL), ATOMIC_MOVE);
     }
 
+    private static void reportMessages() {
+        if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > REPORTING_INTERVAL) {
+            System.out.println("PANIC: trying to report");
+            LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
+            for (Map.Entry<String, LogEntry> e : combined) {
+                if ((e.getValue().level <= 3 && e.getValue().count >= ERROR_REPORTING_THRESHOLD)
+                        || (e.getValue().level == 4 && e.getValue().count >= WARNING_REPORTING_THRESHOLD)) {
+                    System.out.println("PANIC: found message to report");
+                    double bestSimilarity = 0;
+                    for (String reported : reportedMessages.keySet()) {
+                        double curSimilarity = compareStrings(reported.substring(0, Math.min(reported.length(), SUBSTRING_LENGTH)), e.getValue().substringForMatching);
+                        if (curSimilarity > bestSimilarity) {
+                            bestSimilarity = curSimilarity;
+                            if (bestSimilarity > MERGE_THRESHOLD) {
+                                break;
+                            }
+                        }
+                    }
+                    if (bestSimilarity > MERGE_THRESHOLD) {
+                        continue;
+                    }
+                    System.out.println("PANIC: trying to send report about message");
+                    try {
+                        Process p = Runtime.getRuntime().exec (new String[] { "mail", "-s", "PANIC: more than " + e.getValue().count + " " + (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes", REPORTING_RECIPIENT});
+
+                        BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(p.getOutputStream()));
+                        bw.write(e.getKey());
+                        bw.newLine();
+                        bw.newLine();
+                        bw.write("http://graylog.hh.ru/panic/current.html");
+                        bw.close();
+
+                        String s;
+                        BufferedReader stdInput = new BufferedReader(new
+                                InputStreamReader(p.getInputStream()));
+
+                        BufferedReader stdError = new BufferedReader(new
+                                InputStreamReader(p.getErrorStream()));
+
+                        // read the output from the command
+                        System.out.println("Here is the standard output of the command:\n");
+                        while ((s = stdInput.readLine()) != null) {
+                            System.out.println(s);
+                        }
+
+                        // read any errors from the attempted command
+                        System.out.println("Here is the standard error of the command (if any):\n");
+                        while ((s = stdError.readLine()) != null) {
+                            System.out.println(s);
+                        }
+                    }
+                    catch (IOException e1) {
+                        e1.printStackTrace();
+                    }
+                    finally {
+                        reportedMessages.put(e.getKey(), new Date().getTime());
+                    }
+                }
+            }
+            lastTimeMessagesReported = new Date();
+        }
+    }
+
     private static void writeSync(List<LogMessage> messages) throws Exception {
         Long curTimestamp = new Date().getTime() / 1000;
         synchronized (NAME) {
             if (startedProcessing == null) {
                 startedProcessing = new Date();
+                lastTimeMessagesReported = new Date(new Date().getTime() - REPORTING_INTERVAL);
             }
             else if (curTimestamp - startedProcessing.getTime() / 1000 > 600) {
                 messageCountProcessed = (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) * 30;
@@ -287,6 +370,9 @@ public class Panic implements MessageOutput {
             }
             if (new Random().nextInt(3) == 0) {
                 saveState();
+            }
+            if (new Random().nextInt(3) == 0) {
+                reportMessages();
             }
         }
     }
