@@ -30,7 +30,7 @@ public class Panic implements MessageOutput {
     private static final int ERROR_REPORTING_THRESHOLD = 2000;
     private static final int WARNING_REPORTING_THRESHOLD = 10000;
     private static final int REPORTING_INTERVAL = 1000 * 60 * 2;
-    private static final String REPORTING_RECIPIENT = "a.rybalkin@hh.ru an.sumin@hh.ru a.panov@hh.ru n.miroshnichenko@hh.ru m.fedotov@hh.ru";
+    private static final String REPORTING_RECIPIENT = "sre-team@hh.ru aleksey@rybalkin.org";
 
     private static Date startedProcessing = null;
     private static Long messageCountProcessed = 0L;
@@ -162,7 +162,8 @@ public class Panic implements MessageOutput {
     }
 
     private static void saveState() throws IOException {
-        BufferedWriter bw = new BufferedWriter(new FileWriter(SAVED_STATE_FILE));
+        String stamp = new Date().getTime() + "" + new Random().nextLong();
+        BufferedWriter bw = new BufferedWriter(new FileWriter(SAVED_STATE_FILE + stamp));
         for (Long key : intervals.keySet()) {
             for (String message : intervals.get(key).keySet()) {
                 LogEntry e = intervals.get(key).get(message);
@@ -179,6 +180,7 @@ public class Panic implements MessageOutput {
             bw.write(reportedMessages.get(key) + "\n");
         }
         bw.close();
+        Files.move(Paths.get(SAVED_STATE_FILE + stamp), Paths.get(SAVED_STATE_FILE), ATOMIC_MOVE);
     }
 
     private static void generateHtmlWithEpicTemplateEngine() throws IOException {
@@ -223,12 +225,10 @@ public class Panic implements MessageOutput {
 
     private static void reportMessages() {
         if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > REPORTING_INTERVAL) {
-            System.out.println("PANIC: trying to report");
             LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
             for (Map.Entry<String, LogEntry> e : combined) {
                 if ((e.getValue().level <= 3 && e.getValue().count >= ERROR_REPORTING_THRESHOLD)
                         || (e.getValue().level == 4 && e.getValue().count >= WARNING_REPORTING_THRESHOLD)) {
-                    System.out.println("PANIC: found message to report");
                     double bestSimilarity = 0;
                     for (String reported : reportedMessages.keySet()) {
                         double curSimilarity = compareStrings(reported.substring(0, Math.min(reported.length(), SUBSTRING_LENGTH)), e.getValue().substringForMatching);
@@ -242,9 +242,8 @@ public class Panic implements MessageOutput {
                     if (bestSimilarity > MERGE_THRESHOLD) {
                         continue;
                     }
-                    System.out.println("PANIC: trying to send report about message");
                     try {
-                        Process p = Runtime.getRuntime().exec (new String[] { "mail", "-s", "PANIC: more than " + e.getValue().count + " " + (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes", REPORTING_RECIPIENT});
+                        Process p = Runtime.getRuntime().exec (new String[] { "mail", "-s", "[PANIC] more than " + e.getValue().count + " " + (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes", REPORTING_RECIPIENT});
 
                         BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(p.getOutputStream()));
                         bw.write(e.getKey());
@@ -277,10 +276,10 @@ public class Panic implements MessageOutput {
                     }
                     finally {
                         reportedMessages.put(e.getKey(), new Date().getTime());
+                        lastTimeMessagesReported = new Date();
                     }
                 }
             }
-            lastTimeMessagesReported = new Date();
         }
     }
 
@@ -371,7 +370,7 @@ public class Panic implements MessageOutput {
             if (new Random().nextInt(3) == 0) {
                 saveState();
             }
-            if (new Random().nextInt(3) == 0) {
+            if (new Random().nextInt(5) == 0) {
                 reportMessages();
             }
         }
