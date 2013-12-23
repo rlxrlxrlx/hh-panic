@@ -31,6 +31,7 @@ public class Panic implements MessageOutput {
     private static final int WARNING_REPORTING_THRESHOLD = 10000;
     private static final int REPORTING_INTERVAL = 1000 * 60 * 2;
     private static final String REPORTING_RECIPIENT = "sre-team@hh.ru aleksey@rybalkin.org";
+    private static final int REPORT_REPEAT_INTERVAL = 60 * 60 * 24 * 7;
 
     private static Date startedProcessing = null;
     private static Long messageCountProcessed = 0L;
@@ -250,6 +251,8 @@ public class Panic implements MessageOutput {
                         bw.newLine();
                         bw.newLine();
                         bw.write("http://graylog.hh.ru/panic/current.html");
+                        bw.newLine();
+                        bw.write("По этой проблеме не будет повторных оповещений следующие 7 дней");
                         bw.close();
 
                         String s;
@@ -366,6 +369,16 @@ public class Panic implements MessageOutput {
             }
             for (Long key : keysToRemove) {
                 intervals.remove(key);
+            }
+            /* clean up reportedMessages */
+            HashSet<String> rmKeysToRemove = new HashSet<String>();
+            for (String key : reportedMessages.keySet()) {
+                if (curTimestamp - reportedMessages.get(key) / 1000 > REPORT_REPEAT_INTERVAL) {
+                    rmKeysToRemove.add(key);
+                }
+            }
+            for (String key : rmKeysToRemove) {
+                reportedMessages.remove(key);
             }
             if (new Random().nextInt(3) == 0) {
                 saveState();
