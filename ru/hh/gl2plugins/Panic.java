@@ -10,6 +10,8 @@ import org.graylog2.plugin.streams.Stream;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -85,6 +87,16 @@ public class Panic implements MessageOutput {
             }
         }
         return allPairs;
+    }
+
+    private static String calcMD5sum(String s) throws NoSuchAlgorithmException, UnsupportedEncodingException {
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        byte[] rawDigest = md.digest(s.getBytes("UTF-8"));
+        StringBuilder sb = new StringBuilder();
+        for (byte b : rawDigest) {
+            sb.append(Integer.toHexString((b & 0xFF) | 0x100).substring(1, 3));
+        }
+        return sb.toString();
     }
 
     private static String getStreamsString(List<Stream> streams) {
@@ -224,7 +236,7 @@ public class Panic implements MessageOutput {
         Files.move(Paths.get(HTML_TEMP_FILE_PREFIX + stamp), Paths.get(HTML_FULL), ATOMIC_MOVE);
     }
 
-    private static void reportMessages() {
+    private static void reportMessages() throws NoSuchAlgorithmException {
         if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > REPORTING_INTERVAL) {
             LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
             for (Map.Entry<String, LogEntry> e : combined) {
@@ -247,7 +259,21 @@ public class Panic implements MessageOutput {
                         Process p = Runtime.getRuntime().exec (new String[] { "mail", "-s", "[PANIC] more than " + e.getValue().count + " " + (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes", REPORTING_RECIPIENT});
 
                         BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(p.getOutputStream()));
-                        bw.write(e.getKey());
+
+                        File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
+                        if (fullMessageFile.exists()) {
+                            BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
+                            String line = br.readLine();
+                            while (line != null) {
+                                bw.write(line);
+                                bw.newLine();
+                                line = br.readLine();
+                            }
+                            br.close();
+                        }
+                        else {
+                            bw.write(e.getKey());
+                        }
                         bw.newLine();
                         bw.newLine();
                         bw.write("http://graylog.hh.ru/panic/current.html");
@@ -351,6 +377,23 @@ public class Panic implements MessageOutput {
                     intervals.get(curInterval).put(escaped, newEntry);
                     if (bestSimilarity <= MERGE_THRESHOLD) {
                         existingByFirstTwoLetters.get(escaped.substring(0, 2)).add(new AbstractMap.SimpleEntry<String, LogEntry>(escaped, newEntry));
+                    }
+                    String filePath = "/tmp/panic-www/full_messages/" + calcMD5sum(escaped) + ".txt";
+                    if (!new File(filePath).exists()) {
+                        String stamp = new Date().getTime() + "" + new Random().nextLong();
+                        BufferedWriter bw = new BufferedWriter(new FileWriter(filePath + stamp));
+                        bw.write("short message example\n------------\n");
+                        bw.write(m.getShortMessage());
+                        bw.write("\n\nfull message example\n------------\n");
+                        bw.write(m.getFullMessage());
+                        bw.write("\n\nstreams\n-------\n");
+                        for (Stream s : m.getStreams()) {
+                            if (!(s.getTitle().equals("panic") && m.getStreams().size() > 1)) {
+                                bw.write("http://graylog.hh.ru/streams/" + s.getId() + "-" + s.getTitle() + "/messages\n");
+                            }
+                        }
+                        bw.close();
+                        Files.move(Paths.get(filePath + stamp), Paths.get(filePath), ATOMIC_MOVE);
                     }
                     errWarnCount++;
                 }
