@@ -196,7 +196,7 @@ public class Panic implements MessageOutput {
         Files.move(Paths.get(SAVED_STATE_FILE + stamp), Paths.get(SAVED_STATE_FILE), ATOMIC_MOVE);
     }
 
-    private static void generateHtmlWithEpicTemplateEngine() throws IOException {
+    private static void generateHtmlWithEpicTemplateEngine() throws IOException, NoSuchAlgorithmException {
         String stamp = new Date().getTime() + "" + new Random().nextLong();
         BufferedWriter bw = new BufferedWriter(new FileWriter(HTML_TEMP_FILE_PREFIX + stamp));
         BufferedWriter bwLite = new BufferedWriter(new FileWriter(HTML_TEMP_FILE_PREFIX + stamp + ".lite"));
@@ -222,9 +222,9 @@ public class Panic implements MessageOutput {
 
         int cnt = 0;
         for (Map.Entry<String, LogEntry> e : sorted) {
-            bw.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + "><td>" + e.getValue().count + "</td><td>" + e.getValue().streams + "</td><td>" + e.getKey() + "</td></tr>\n");
+            bw.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + "><td>" + e.getValue().count + "</td><td>" + e.getValue().streams + "</td><td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td><td>" + e.getKey() + "</td></tr>\n");
             if (cnt < 100) {
-                bwLite.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + "><td>" + e.getValue().count + "</td><td>" + e.getValue().streams + "</td><td>" + e.getKey() + "</td></tr>\n");
+                bwLite.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + "><td>" + e.getValue().count + "</td><td>" + e.getValue().streams + "</td><td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td><td>" + e.getKey() + "</td></tr>\n");
             }
             cnt++;
         }
