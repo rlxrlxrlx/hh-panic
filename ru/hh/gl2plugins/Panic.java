@@ -57,10 +57,10 @@ public class Panic implements MessageOutput {
             }
             @Override
             public void run() {
-                BufferedReader stdInput = new BufferedReader(new InputStreamReader(stream));
+                BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
                 String s;
                 try {
-                    while ((s = stdInput.readLine()) != null) {
+                    while ((s = reader.readLine()) != null) {
                         System.out.println(s);
                     }
                 } catch (IOException e) {
