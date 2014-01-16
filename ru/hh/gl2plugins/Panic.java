@@ -21,25 +21,13 @@ import static java.nio.file.StandardCopyOption.*;
 public class Panic implements MessageOutput {
     public static final String NAME = "Panic";
 
-    private static final int INTERVAL_SIZE = 120;
-    private static final int SHOW_INTERVALS = 5;
-    private static final int SUBSTRING_LENGTH = 100;
-    private static final double MERGE_THRESHOLD = 0.6;
-    private static final String HTML_TEMP_FILE_PREFIX = "/tmp/panic-www/superpanic.html.";
-    private static final String SAVED_STATE_FILE = "/tmp/panic-www/saved-state";
-    private static final String HTML_LITE = "/tmp/panic-www/current.html";
-    private static final String HTML_FULL = "/tmp/panic-www/current-full.html";
-    private static final int ERROR_REPORTING_THRESHOLD = 2000;
-    private static final int WARNING_REPORTING_THRESHOLD = 10000;
-    private static final int REPORTING_INTERVAL = 1000 * 60 * 2;
-    private static final String REPORTING_RECIPIENT = "sre-team@hh.ru aleksey@rybalkin.org";
-    private static final int REPORT_REPEAT_INTERVAL = 60 * 60 * 24 * 7;
+    private static final String OPTIONS_FILE = "/etc/panic.conf";
 
+    private static Properties options = new Properties();
     private static Date startedProcessing = null;
     private static Long messageCountProcessed = 0L;
     private static Long errWarnCountProcessed = 0L;
     private static Date lastTimeMessagesReported = null;
-
     private static ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>> intervals = new ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>>();
     private static ConcurrentHashMap<String, Long> reportedMessages = new ConcurrentHashMap<String, Long>();
 
@@ -57,7 +45,39 @@ public class Panic implements MessageOutput {
         }
     }
 
-    /* http://www.catalysoft.com/articles/StrikeAMatch.html */
+    /*
+        used to run `mail` and `curl`
+     */
+    private static Process runProcess(String[] args) throws IOException {
+        final Process process = Runtime.getRuntime().exec(args);
+        class StreamReader implements Runnable {
+            InputStream stream;
+            StreamReader(InputStream stream) {
+                this.stream = stream;
+            }
+            @Override
+            public void run() {
+                BufferedReader stdInput = new BufferedReader(new InputStreamReader(stream));
+                String s;
+                try {
+                    while ((s = stdInput.readLine()) != null) {
+                        System.out.println(s);
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        new Thread(new StreamReader(process.getInputStream())).start();
+        new Thread(new StreamReader(process.getErrorStream())).start();
+        return process;
+    }
+
+    /*
+        Returns 0 < similarity < 1 of two strings
+        Adapted from:
+        http://www.catalysoft.com/articles/StrikeAMatch.html
+     */
     private static double compareStrings(String str1, String str2) {
         char[] charStr1 = str1.toUpperCase().toCharArray();
         char[] charStr2 = str2.toUpperCase().toCharArray();
@@ -87,6 +107,61 @@ public class Panic implements MessageOutput {
             }
         }
         return allPairs;
+    }
+
+    /*
+        From Jettison (for sending json request to jira api)
+     */
+    public static String quoteJSON(String string) {
+        if (string == null || string.length() == 0) {
+            return "\"\"";
+        }
+
+        char c;
+        int i;
+        int len = string.length();
+        StringBuilder sb = new StringBuilder(len + 4);
+        String t;
+
+        sb.append('"');
+        for (i = 0; i < len; i += 1) {
+            c = string.charAt(i);
+            switch (c) {
+                case '\\':
+                case '"':
+                    sb.append('\\');
+                    sb.append(c);
+                    break;
+                case '/':
+                    sb.append('\\');
+                    sb.append(c);
+                    break;
+                case '\b':
+                    sb.append("\\b");
+                    break;
+                case '\t':
+                    sb.append("\\t");
+                    break;
+                case '\n':
+                    sb.append("\\n");
+                    break;
+                case '\f':
+                    sb.append("\\f");
+                    break;
+                case '\r':
+                    sb.append("\\r");
+                    break;
+                default:
+                    if (c < ' ') {
+                        t = "000" + Integer.toHexString(c);
+                        sb.append("\\u").append(t.substring(t.length() - 4));
+                    } else {
+                        sb.append(c);
+                    }
+            }
+        }
+        sb.append('"');
+        return sb.toString();
     }
 
     private static String calcMD5sum(String s) throws NoSuchAlgorithmException, UnsupportedEncodingException {
@@ -144,8 +219,9 @@ public class Panic implements MessageOutput {
     }
 
     private static void restoreState() throws IOException {
-        if (new File(SAVED_STATE_FILE).exists()) {
-            BufferedReader br = new BufferedReader(new FileReader(SAVED_STATE_FILE));
+        String savedStateFile = options.getProperty("work_directory") + "/saved-state";
+        if (new File(savedStateFile).exists()) {
+            BufferedReader br = new BufferedReader(new FileReader(savedStateFile));
             String timestamp = br.readLine();
             while (timestamp != null && !timestamp.equals("%%REPORTED_MESSAGES%%")) {
                 String message = br.readLine();
@@ -156,7 +232,10 @@ public class Panic implements MessageOutput {
                 if (!intervals.containsKey(stamp)) {
                     intervals.put(stamp, new ConcurrentHashMap<String, LogEntry>());
                 }
-                intervals.get(stamp).put(message, new LogEntry(level, count, streams, message.substring(0, Math.min(message.length(), SUBSTRING_LENGTH))));
+                intervals.get(stamp).put(message, new LogEntry(level, count, streams,
+                        message.substring(0,
+                                Math.min(message.length(),
+                                        Integer.parseInt(options.getProperty("substring_length"))))));
                 timestamp = br.readLine();
             }
             if (timestamp != null && timestamp.equals("%%REPORTED_MESSAGES%%")) {
@@ -168,15 +247,16 @@ public class Panic implements MessageOutput {
                 }
             }
             br.close();
-            if (!new File(SAVED_STATE_FILE).delete()) {
+            if (!new File(savedStateFile).delete()) {
                 System.err.println("panic: cannot delete saved-state");
             }
         }
     }
 
     private static void saveState() throws IOException {
+        String savedStateFile = options.getProperty("work_directory") + "/saved-state";
         String stamp = new Date().getTime() + "" + new Random().nextLong();
-        BufferedWriter bw = new BufferedWriter(new FileWriter(SAVED_STATE_FILE + stamp));
+        BufferedWriter bw = new BufferedWriter(new FileWriter(savedStateFile + stamp));
         for (Long key : intervals.keySet()) {
             for (String message : intervals.get(key).keySet()) {
                 LogEntry e = intervals.get(key).get(message);
@@ -193,13 +273,15 @@ public class Panic implements MessageOutput {
             bw.write(reportedMessages.get(key) + "\n");
         }
         bw.close();
-        Files.move(Paths.get(SAVED_STATE_FILE + stamp), Paths.get(SAVED_STATE_FILE), ATOMIC_MOVE);
+        Files.move(Paths.get(savedStateFile + stamp), Paths.get(savedStateFile), ATOMIC_MOVE);
     }
 
     private static void generateHtmlWithEpicTemplateEngine() throws IOException, NoSuchAlgorithmException {
+        String fullFile = options.getProperty("apache_root") + "/current-full.html";
+        String liteFile = options.getProperty("apache_root") + "/current.html";
         String stamp = new Date().getTime() + "" + new Random().nextLong();
-        BufferedWriter bw = new BufferedWriter(new FileWriter(HTML_TEMP_FILE_PREFIX + stamp));
-        BufferedWriter bwLite = new BufferedWriter(new FileWriter(HTML_TEMP_FILE_PREFIX + stamp + ".lite"));
+        BufferedWriter bw = new BufferedWriter(new FileWriter(fullFile + stamp));
+        BufferedWriter bwLite = new BufferedWriter(new FileWriter(liteFile + stamp));
 
         String header = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>panic</title><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap.min.css\"><link rel=\"stylesheet\" href=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/css/bootstrap-theme.min.css\"><script src=\"//netdna.bootstrapcdn.com/bootstrap/3.0.2/js/bootstrap.min.js\"></script><meta http-equiv=\"refresh\" content=\"60\"></head><body>";
         bw.write(header);
@@ -214,7 +296,10 @@ public class Panic implements MessageOutput {
         bw.write(top);
         bwLite.write(top);
 
-        String flash = "<h3>Логи за последние " + (INTERVAL_SIZE / 60) * (SHOW_INTERVALS - 1) + " - " + (INTERVAL_SIZE / 60) * SHOW_INTERVALS + " минут</h3>";
+        String flash = "<h3>Логи за последние " + (Integer.parseInt(options.getProperty("interval_size")) / 60) *
+                (Integer.parseInt(options.getProperty("show_intervals")) - 1) +
+                " - " + (Integer.parseInt(options.getProperty("interval_size")) / 60) *
+                Integer.parseInt(options.getProperty("show_intervals")) + " минут</h3>";
         bw.write(flash);
         bwLite.write(flash);
 
@@ -232,78 +317,91 @@ public class Panic implements MessageOutput {
         bwLite.write("</table><a href='/panic/current-full.html'>Show me everything</a><br/><br/></div></body></html>");
         bw.close();
         bwLite.close();
-        Files.move(Paths.get(HTML_TEMP_FILE_PREFIX + stamp + ".lite"), Paths.get(HTML_LITE), ATOMIC_MOVE);
-        Files.move(Paths.get(HTML_TEMP_FILE_PREFIX + stamp), Paths.get(HTML_FULL), ATOMIC_MOVE);
+        Files.move(Paths.get(liteFile + stamp), Paths.get(liteFile), ATOMIC_MOVE);
+        Files.move(Paths.get(fullFile + stamp), Paths.get(fullFile), ATOMIC_MOVE);
+    }
+
+    private static void sendEmailNotification(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException {
+        Process process = runProcess(new String[]{"mail", "-s", "[PANIC] more than " + e.getValue().count +
+                " " + (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes",
+                options.getProperty("reporting_recipient")});
+
+        BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
+
+        File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
+        if (fullMessageFile.exists()) {
+            BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
+            String line = br.readLine();
+            while (line != null) {
+                bw.write(line);
+                bw.newLine();
+                line = br.readLine();
+            }
+            br.close();
+        } else {
+            bw.write(e.getKey());
+        }
+        bw.newLine();
+        bw.newLine();
+        bw.write("http://graylog.hh.ru/panic/current.html");
+        bw.newLine();
+        bw.write("По этой проблеме не будет повторных оповещений следующие 7 дней");
+        bw.close();
+    }
+
+    private static void createJiraTask(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException {
+        String stamp = new Date().getTime() + "" + new Random().nextLong();
+        BufferedWriter bw = new BufferedWriter(new FileWriter(options.getProperty("apache_root") + "/json" + stamp));
+        String shortMessage = quoteJSON(e.getKey());
+
+        String fullMessage = "";
+        File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
+        if (fullMessageFile.exists()) {
+            BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
+            String line = br.readLine();
+            while (line != null) {
+                fullMessage += line + "\n";
+                line = br.readLine();
+            }
+            br.close();
+        } else {
+            fullMessage = shortMessage;
+        }
+        fullMessage = quoteJSON(fullMessage);
+
+        bw.write("{\"fields\":{\"project\":{\"key\":\"PANIC\"},\"summary\":\"" + shortMessage + "\",\"issuetype\":{\"id\":330},\"description\":\"" + fullMessage + "\"}}");
+        bw.close();
+        Process p = runProcess(new String[]{"curl", "-H", "Content-Type: application/json", "-X",
+                "POST", "-d", "@" + options.getProperty("apache_root") + "/json" + stamp, "-u",
+                options.getProperty("jira_user") + ":" + options.getProperty("jira_password"),
+                "http://jira.hh.ru/rest/api/2/issue"});
     }
 
     private static void reportMessages() throws NoSuchAlgorithmException {
-        if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > REPORTING_INTERVAL) {
+        if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > Integer.parseInt(options.getProperty("reporting_interval"))) {
             LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
             for (Map.Entry<String, LogEntry> e : combined) {
-                if ((e.getValue().level <= 3 && e.getValue().count >= ERROR_REPORTING_THRESHOLD)
-                        || (e.getValue().level == 4 && e.getValue().count >= WARNING_REPORTING_THRESHOLD)) {
+                if ((e.getValue().level <= 3 && e.getValue().count >= Integer.parseInt(options.getProperty("error_reporting_threshold")))
+                        || (e.getValue().level == 4 && e.getValue().count >= Integer.parseInt(options.getProperty("warning_reporting_threshold")))) {
                     double bestSimilarity = 0;
                     for (String reported : reportedMessages.keySet()) {
-                        double curSimilarity = compareStrings(reported.substring(0, Math.min(reported.length(), SUBSTRING_LENGTH)), e.getValue().substringForMatching);
+                        double curSimilarity = compareStrings(reported.substring(0, Math.min(reported.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
                         if (curSimilarity > bestSimilarity) {
                             bestSimilarity = curSimilarity;
-                            if (bestSimilarity > MERGE_THRESHOLD) {
+                            if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
                                 break;
                             }
                         }
                     }
-                    if (bestSimilarity > MERGE_THRESHOLD) {
+                    if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
                         continue;
                     }
                     try {
-                        Process p = Runtime.getRuntime().exec (new String[] { "mail", "-s", "[PANIC] more than " + e.getValue().count + " " + (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes", REPORTING_RECIPIENT});
-
-                        BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(p.getOutputStream()));
-
-                        File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
-                        if (fullMessageFile.exists()) {
-                            BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
-                            String line = br.readLine();
-                            while (line != null) {
-                                bw.write(line);
-                                bw.newLine();
-                                line = br.readLine();
-                            }
-                            br.close();
-                        }
-                        else {
-                            bw.write(e.getKey());
-                        }
-                        bw.newLine();
-                        bw.newLine();
-                        bw.write("http://graylog.hh.ru/panic/current.html");
-                        bw.newLine();
-                        bw.write("По этой проблеме не будет повторных оповещений следующие 7 дней");
-                        bw.close();
-
-                        String s;
-                        BufferedReader stdInput = new BufferedReader(new
-                                InputStreamReader(p.getInputStream()));
-
-                        BufferedReader stdError = new BufferedReader(new
-                                InputStreamReader(p.getErrorStream()));
-
-                        // read the output from the command
-                        System.out.println("Here is the standard output of the command:\n");
-                        while ((s = stdInput.readLine()) != null) {
-                            System.out.println(s);
-                        }
-
-                        // read any errors from the attempted command
-                        System.out.println("Here is the standard error of the command (if any):\n");
-                        while ((s = stdError.readLine()) != null) {
-                            System.out.println(s);
-                        }
-                    }
-                    catch (IOException e1) {
+                        sendEmailNotification(e);
+                        createJiraTask(e);
+                    } catch (IOException e1) {
                         e1.printStackTrace();
-                    }
-                    finally {
+                    } finally {
                         reportedMessages.put(e.getKey(), new Date().getTime());
                         lastTimeMessagesReported = new Date();
                     }
@@ -313,13 +411,13 @@ public class Panic implements MessageOutput {
     }
 
     private static void writeSync(List<LogMessage> messages) throws Exception {
+        options.load(new FileInputStream(OPTIONS_FILE));
         Long curTimestamp = new Date().getTime() / 1000;
         synchronized (NAME) {
             if (startedProcessing == null) {
                 startedProcessing = new Date();
-                lastTimeMessagesReported = new Date(new Date().getTime() - REPORTING_INTERVAL);
-            }
-            else if (curTimestamp - startedProcessing.getTime() / 1000 > 600) {
+                lastTimeMessagesReported = new Date(new Date().getTime() - Integer.parseInt(options.getProperty("reporting_interval")));
+            } else if (curTimestamp - startedProcessing.getTime() / 1000 > 600) {
                 messageCountProcessed = (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) * 30;
                 errWarnCountProcessed = (errWarnCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) * 30;
                 startedProcessing = new Date((curTimestamp - 30) * 1000);
@@ -328,7 +426,7 @@ public class Panic implements MessageOutput {
                 restoreState();
             }
         }
-        Long curInterval = curTimestamp - curTimestamp % INTERVAL_SIZE;
+        Long curInterval = curTimestamp - curTimestamp % Integer.parseInt(options.getProperty("interval_size"));
         int errWarnCount = 0;
         if (messages.size() > 0) {
             LinkedList<Map.Entry<String, LogEntry>> existing = combineIntervals();
@@ -352,7 +450,7 @@ public class Panic implements MessageOutput {
                         if (listToMatch != null) {
                             for (Map.Entry<String, LogEntry> e : listToMatch) {
                                 if (e.getKey().length() > 1) {
-                                    double curSimilarity = compareStrings(escaped.substring(0, Math.min(escaped.length(), SUBSTRING_LENGTH)), e.getValue().substringForMatching);
+                                    double curSimilarity = compareStrings(escaped.substring(0, Math.min(escaped.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
                                     if (curSimilarity > bestSimilarity) {
                                         bestSimilarity = curSimilarity;
                                         mostSimilar = e.getKey();
@@ -361,7 +459,7 @@ public class Panic implements MessageOutput {
                             }
                         }
                     }
-                    if (bestSimilarity > MERGE_THRESHOLD) {
+                    if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
                         escaped = mostSimilar;
                     }
                     if (!intervals.containsKey(curInterval)) {
@@ -373,9 +471,9 @@ public class Panic implements MessageOutput {
                                     intervals.get(curInterval).get(escaped).streams,
                                     intervals.get(curInterval).get(escaped).substringForMatching)
                             :
-                            new LogEntry(m.getLevel(), 1, getStreamsString(m.getStreams()), escaped.substring(0, Math.min(escaped.length(), SUBSTRING_LENGTH)));
+                            new LogEntry(m.getLevel(), 1, getStreamsString(m.getStreams()), escaped.substring(0, Math.min(escaped.length(), Integer.parseInt(options.getProperty("substring_length")))));
                     intervals.get(curInterval).put(escaped, newEntry);
-                    if (bestSimilarity <= MERGE_THRESHOLD) {
+                    if (bestSimilarity <= Double.parseDouble(options.getProperty("merge_threshold"))) {
                         existingByFirstTwoLetters.get(escaped.substring(0, 2)).add(new AbstractMap.SimpleEntry<String, LogEntry>(escaped, newEntry));
                     }
                     String filePath = "/tmp/panic-www/full_messages/" + calcMD5sum(escaped) + ".txt";
@@ -406,7 +504,7 @@ public class Panic implements MessageOutput {
             /* clean up intervals */
             HashSet<Long> keysToRemove = new HashSet<Long>();
             for (Long key : intervals.keySet()) {
-                if (key + INTERVAL_SIZE * SHOW_INTERVALS < curTimestamp) {
+                if (key + Integer.parseInt(options.getProperty("interval_size")) * Integer.parseInt(options.getProperty("show_intervals")) < curTimestamp) {
                     keysToRemove.add(key);
                 }
             }
@@ -416,7 +514,7 @@ public class Panic implements MessageOutput {
             /* clean up reportedMessages */
             HashSet<String> rmKeysToRemove = new HashSet<String>();
             for (String key : reportedMessages.keySet()) {
-                if (curTimestamp - reportedMessages.get(key) / 1000 > REPORT_REPEAT_INTERVAL) {
+                if (curTimestamp - reportedMessages.get(key) / 1000 > Integer.parseInt(options.getProperty("report_repeat_interval"))) {
                     rmKeysToRemove.add(key);
                 }
             }
@@ -458,15 +556,5 @@ public class Panic implements MessageOutput {
     @Override
     public String getName() {
         return NAME;
-    }
-
-    public static void main(String[] args) {
-        String s1 = "GET /logic/resume/view?hash=ddeefffffaedf&field=lang&all_blocks=True&representation=hh.web. (...): user None not allowed to view resumes set([''])";
-        String s2 = "GET /logic/resume/view?hash=baacffaacedfbe&field=lang&all_blocks=True&representation=hh.web. (...): user None not allowed to view resumes set([''])";
-        System.out.println(compareStrings(
-                s1.substring(0, Math.min(SUBSTRING_LENGTH, s1.length()))
-                ,
-                s2.substring(0, Math.min(SUBSTRING_LENGTH, s2.length()))
-        ));
     }
 }
