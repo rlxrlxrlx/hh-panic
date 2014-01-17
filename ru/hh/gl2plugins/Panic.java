@@ -321,40 +321,13 @@ public class Panic implements MessageOutput {
         Files.move(Paths.get(fullFile + stamp), Paths.get(fullFile), ATOMIC_MOVE);
     }
 
-    private static void sendEmailNotification(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException {
-        Process process = runProcess(new String[]{"mail", "-s", "[PANIC] more than " + e.getValue().count +
-                " " + (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes",
-                options.getProperty("reporting_recipient")});
-
-        BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
-
-        File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
-        if (fullMessageFile.exists()) {
-            BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
-            String line = br.readLine();
-            while (line != null) {
-                bw.write(line);
-                bw.newLine();
-                line = br.readLine();
-            }
-            br.close();
-        } else {
-            bw.write(e.getKey());
-        }
-        bw.newLine();
-        bw.newLine();
-        bw.write("http://graylog.hh.ru/panic/current.html");
-        bw.newLine();
-        bw.write("По этой проблеме не будет повторных оповещений следующие 7 дней");
-        bw.close();
-    }
-
-    private static void createJiraTask(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException {
+    private static int createJiraTask(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException, InterruptedException {
         String stamp = new Date().getTime() + "" + new Random().nextLong();
         BufferedWriter bw = new BufferedWriter(new FileWriter(options.getProperty("apache_root") + "/json" + stamp));
-        String shortMessage = quoteJSON(e.getKey());
+        String shortMessage = quoteJSON(e.getValue().substringForMatching);
 
-        String fullMessage = "";
+        String fullMessage = "[PANIC] more than " + e.getValue().count + " " +
+                (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes\n\n{noformat}\n";
         File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
         if (fullMessageFile.exists()) {
             BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
@@ -367,17 +340,19 @@ public class Panic implements MessageOutput {
         } else {
             fullMessage = shortMessage;
         }
+        fullMessage += "\n{noformat}\n\nhttp://graylog.hh.ru/panic/current.html";
         fullMessage = quoteJSON(fullMessage);
 
-        bw.write("{\"fields\":{\"project\":{\"key\":\"PANIC\"},\"summary\":\"" + shortMessage + "\",\"issuetype\":{\"id\":330},\"description\":\"" + fullMessage + "\"}}");
+        bw.write("{\"fields\":{\"project\":{\"key\":\"PANIC\"},\"summary\":" + shortMessage + ",\"issuetype\":{\"id\":330},\"description\":" + fullMessage + "}}");
         bw.close();
         Process p = runProcess(new String[]{"curl", "-H", "Content-Type: application/json", "-X",
                 "POST", "-d", "@" + options.getProperty("apache_root") + "/json" + stamp, "-u",
                 options.getProperty("jira_user") + ":" + options.getProperty("jira_password"),
                 "http://jira.hh.ru/rest/api/2/issue"});
+        return p.waitFor();
     }
 
-    private static void reportMessages() throws NoSuchAlgorithmException {
+    private static void reportMessages() throws NoSuchAlgorithmException, InterruptedException {
         if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > Integer.parseInt(options.getProperty("reporting_interval"))) {
             LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
             for (Map.Entry<String, LogEntry> e : combined) {
@@ -396,13 +371,15 @@ public class Panic implements MessageOutput {
                     if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
                         continue;
                     }
+                    int failure = 0;
                     try {
-                        sendEmailNotification(e);
-                        createJiraTask(e);
+                        failure = createJiraTask(e);
                     } catch (IOException e1) {
                         e1.printStackTrace();
                     } finally {
-                        reportedMessages.put(e.getKey(), new Date().getTime());
+                        if (failure == 0) {
+                            reportedMessages.put(e.getKey(), new Date().getTime());
+                        }
                         lastTimeMessagesReported = new Date();
                     }
                 }
@@ -512,7 +489,7 @@ public class Panic implements MessageOutput {
                 intervals.remove(key);
             }
             /* clean up reportedMessages */
-            HashSet<String> rmKeysToRemove = new HashSet<String>();
+            /*HashSet<String> rmKeysToRemove = new HashSet<String>();
             for (String key : reportedMessages.keySet()) {
                 if (curTimestamp - reportedMessages.get(key) / 1000 > Integer.parseInt(options.getProperty("report_repeat_interval"))) {
                     rmKeysToRemove.add(key);
@@ -520,7 +497,7 @@ public class Panic implements MessageOutput {
             }
             for (String key : rmKeysToRemove) {
                 reportedMessages.remove(key);
-            }
+            }*/
             if (new Random().nextInt(3) == 0) {
                 saveState();
             }
@@ -556,5 +533,9 @@ public class Panic implements MessageOutput {
     @Override
     public String getName() {
         return NAME;
+    }
+
+    public static void main(String[] args) {
+        // tests
     }
 }
