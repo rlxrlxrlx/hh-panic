@@ -1,4 +1,4 @@
-package ru.hh.gl2plugins;
+package ru.hh.gl2plugins.panic;
 
 import org.graylog2.plugin.GraylogServer;
 import org.graylog2.plugin.logmessage.LogMessage;
@@ -46,34 +46,6 @@ public class Panic implements MessageOutput {
     }
 
     /*
-        used to run `mail` and `curl`
-     */
-    private static Process runProcess(String[] args) throws IOException {
-        final Process process = Runtime.getRuntime().exec(args);
-        class StreamReader implements Runnable {
-            InputStream stream;
-            StreamReader(InputStream stream) {
-                this.stream = stream;
-            }
-            @Override
-            public void run() {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-                String s;
-                try {
-                    while ((s = reader.readLine()) != null) {
-                        System.out.println(s);
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-        new Thread(new StreamReader(process.getInputStream())).start();
-        new Thread(new StreamReader(process.getErrorStream())).start();
-        return process;
-    }
-
-    /*
         Returns 0 < similarity < 1 of two strings
         Adapted from:
         http://www.catalysoft.com/articles/StrikeAMatch.html
@@ -107,61 +79,6 @@ public class Panic implements MessageOutput {
             }
         }
         return allPairs;
-    }
-
-    /*
-        From Jettison (for sending json request to jira api)
-     */
-    public static String quoteJSON(String string) {
-        if (string == null || string.length() == 0) {
-            return "\"\"";
-        }
-
-        char c;
-        int i;
-        int len = string.length();
-        StringBuilder sb = new StringBuilder(len + 4);
-        String t;
-
-        sb.append('"');
-        for (i = 0; i < len; i += 1) {
-            c = string.charAt(i);
-            switch (c) {
-                case '\\':
-                case '"':
-                    sb.append('\\');
-                    sb.append(c);
-                    break;
-                case '/':
-                    sb.append('\\');
-                    sb.append(c);
-                    break;
-                case '\b':
-                    sb.append("\\b");
-                    break;
-                case '\t':
-                    sb.append("\\t");
-                    break;
-                case '\n':
-                    sb.append("\\n");
-                    break;
-                case '\f':
-                    sb.append("\\f");
-                    break;
-                case '\r':
-                    sb.append("\\r");
-                    break;
-                default:
-                    if (c < ' ') {
-                        t = "000" + Integer.toHexString(c);
-                        sb.append("\\u").append(t.substring(t.length() - 4));
-                    } else {
-                        sb.append(c);
-                    }
-            }
-        }
-        sb.append('"');
-        return sb.toString();
     }
 
     private static String calcMD5sum(String s) throws NoSuchAlgorithmException, UnsupportedEncodingException {
@@ -321,11 +238,8 @@ public class Panic implements MessageOutput {
         Files.move(Paths.get(fullFile + stamp), Paths.get(fullFile), ATOMIC_MOVE);
     }
 
-    private static int createJiraTask(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException, InterruptedException {
-        String stamp = new Date().getTime() + "" + new Random().nextLong();
-        BufferedWriter bw = new BufferedWriter(new FileWriter(options.getProperty("apache_root") + "/json" + stamp));
-        String shortMessage = quoteJSON(e.getValue().substringForMatching);
-
+    private static void createJiraTask(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException {
+        String shortMessage = e.getValue().substringForMatching;
         String fullMessage = "[PANIC] more than " + e.getValue().count + " " +
                 (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes\n\n{noformat}\n";
         File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
@@ -341,15 +255,11 @@ public class Panic implements MessageOutput {
             fullMessage = shortMessage;
         }
         fullMessage += "\n{noformat}\n\nhttp://graylog.hh.ru/panic/current.html";
-        fullMessage = quoteJSON(fullMessage);
 
-        bw.write("{\"fields\":{\"project\":{\"key\":\"PANIC\"},\"summary\":" + shortMessage + ",\"issuetype\":{\"id\":330},\"description\":" + fullMessage + "}}");
-        bw.close();
-        Process p = runProcess(new String[]{"curl", "-H", "Content-Type: application/json", "-X",
-                "POST", "-d", "@" + options.getProperty("apache_root") + "/json" + stamp, "-u",
-                options.getProperty("jira_user") + ":" + options.getProperty("jira_password"),
-                "http://jira.hh.ru/rest/api/2/issue"});
-        return p.waitFor();
+        JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
+                options.getProperty("jira_user"),
+                options.getProperty("jira_password"));
+        client.createIssue(shortMessage, fullMessage);
     }
 
     private static void reportMessages() throws NoSuchAlgorithmException, InterruptedException {
@@ -371,15 +281,14 @@ public class Panic implements MessageOutput {
                     if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
                         continue;
                     }
-                    int failure = 0;
                     try {
-                        failure = createJiraTask(e);
-                    } catch (IOException e1) {
-                        e1.printStackTrace();
-                    } finally {
-                        if (failure == 0) {
-                            reportedMessages.put(e.getKey(), new Date().getTime());
-                        }
+                        createJiraTask(e);
+                        reportedMessages.put(e.getKey(), new Date().getTime());
+                    }
+                    catch (IOException exception) {
+                        exception.printStackTrace();
+                    }
+                    finally {
                         lastTimeMessagesReported = new Date();
                     }
                 }
