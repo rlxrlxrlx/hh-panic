@@ -21,6 +21,8 @@ import org.apache.http.util.EntityUtils;
 import org.codehaus.jettison.json.JSONObject;
 
 import java.io.IOException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class JiraApiClient {
     private String jiraUrl;
@@ -33,7 +35,9 @@ public class JiraApiClient {
         this.jiraPassword = jiraPassword;
     }
 
-    private void postJsonRequest(String json, String subUrl) throws IOException {
+    private String postJsonRequest(String json, String subUrl) throws IOException {
+        String result = "";
+
         HttpHost host = new HttpHost("jira.hh.ru", 80, "http");
         CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
         credentialsProvider.setCredentials(new AuthScope(host.getHostName(), host.getPort()),
@@ -66,16 +70,23 @@ public class JiraApiClient {
                     }
                 }
             };
-            client.execute(post, handler, context);
+            result = client.execute(post, handler, context);
         }
         finally {
             client.close();
         }
+        return result;
     }
 
-    public void createIssue(String shortMessage, String fullMessage) throws IOException {
-        postJsonRequest("{\"fields\":{\"project\":{\"key\":\"PANIC\"},\"summary\":" + JSONObject.quote(shortMessage) + ",\"issuetype\":{\"id\":330},\"description\":" + JSONObject.quote(fullMessage) + "}}",
-                "/issue");
+    public String createIssue(String shortMessage, String fullMessage) throws IOException {
+        String result = postJsonRequest("{\"fields\":{\"project\":{\"key\":\"PANIC\"},\"summary\":" + JSONObject.quote(shortMessage) + ",\"issuetype\":{\"id\":330},\"description\":" + JSONObject.quote(fullMessage) + "}}",
+                "/issue").replace('\n', ' ');
+        Pattern p = Pattern.compile(".*(PANIC-[0-9]+).*");
+        Matcher m = p.matcher(result);
+        if (m.matches()) {
+            return m.group(1);
+        }
+        return null;
     }
 
     public void commentOnIssue(String issueKey, String comment) throws IOException {

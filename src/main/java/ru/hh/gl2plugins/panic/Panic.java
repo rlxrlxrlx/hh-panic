@@ -11,25 +11,28 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.apache.commons.lang3.StringEscapeUtils.escapeHtml4;
 import static java.nio.file.StandardCopyOption.*;
 
 public class Panic implements MessageOutput {
+    // Graylog needs this (it seems)
     public static final String NAME = "Panic";
 
     private static final String OPTIONS_FILE = "/etc/panic.conf";
-
     private static Properties options = new Properties();
+
     private static Date startedProcessing = null;
     private static Long messageCountProcessed = 0L;
     private static Long errWarnCountProcessed = 0L;
     private static Date lastTimeMessagesReported = null;
+    private static Date lastTimeJiraTaskCreated = null;
+    private static JiraTask lastReportedJiraTask = null;
     private static ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>> intervals = new ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>>();
-    private static ConcurrentHashMap<String, Long> reportedMessages = new ConcurrentHashMap<String, Long>();
+    private static ConcurrentHashMap<String, CopyOnWriteArrayList<JiraTask>> jiraTasks = new ConcurrentHashMap<String, CopyOnWriteArrayList<JiraTask>>();
 
     private static class LogEntry {
         Integer level;
@@ -45,12 +48,17 @@ public class Panic implements MessageOutput {
         }
     }
 
-    private static String calcMD5sum(String s) throws NoSuchAlgorithmException, UnsupportedEncodingException {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        byte[] rawDigest = md.digest(s.getBytes("UTF-8"));
+    private static String calcMD5sum(String s) {
         StringBuilder sb = new StringBuilder();
-        for (byte b : rawDigest) {
-            sb.append(Integer.toHexString((b & 0xFF) | 0x100).substring(1, 3));
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] rawDigest = md.digest(s.getBytes("UTF-8"));
+            for (byte b : rawDigest) {
+                sb.append(Integer.toHexString((b & 0xFF) | 0x100).substring(1, 3));
+            }
+        }
+        catch (Exception e) {
+            e.printStackTrace();
         }
         return sb.toString();
     }
@@ -104,7 +112,7 @@ public class Panic implements MessageOutput {
         if (new File(savedStateFile).exists()) {
             BufferedReader br = new BufferedReader(new FileReader(savedStateFile));
             String timestamp = br.readLine();
-            while (timestamp != null && !timestamp.equals("%%REPORTED_MESSAGES%%")) {
+            while (timestamp != null && !timestamp.equals("%%JIRA_TASKS%%")) {
                 String message = br.readLine();
                 Integer count = Integer.parseInt(br.readLine());
                 Integer level = Integer.parseInt(br.readLine());
@@ -119,11 +127,20 @@ public class Panic implements MessageOutput {
                                         Integer.parseInt(options.getProperty("substring_length"))))));
                 timestamp = br.readLine();
             }
-            if (timestamp != null && timestamp.equals("%%REPORTED_MESSAGES%%")) {
+            if (timestamp != null && timestamp.equals("%%JIRA_TASKS%%")) {
                 String message = br.readLine();
                 while (message != null) {
-                    Long dateReported = Long.parseLong(br.readLine());
-                    reportedMessages.put(message, dateReported);
+                    String summary = message;
+                    Integer taskCount = Integer.parseInt(br.readLine());
+                    CopyOnWriteArrayList<JiraTask> taskList = new CopyOnWriteArrayList<JiraTask>();
+                    for (int i = 0; i < taskCount; i++) {
+                        String issue = br.readLine();
+                        Boolean closed = Boolean.parseBoolean(br.readLine());
+                        Date lastUpdate = new Date(Long.parseLong(br.readLine()));
+                        JiraTask task = new JiraTask(summary, issue, closed, lastUpdate);
+                        taskList.add(task);
+                    }
+                    jiraTasks.put(summary, taskList);
                     message = br.readLine();
                 }
             }
@@ -148,16 +165,22 @@ public class Panic implements MessageOutput {
                 bw.write(e.streams + "\n");
             }
         }
-        bw.write("%%REPORTED_MESSAGES%%\n");
-        for (String key : reportedMessages.keySet()) {
+        bw.write("%%JIRA_TASKS%%\n");
+        for (String key : jiraTasks.keySet()) {
             bw.write(key + "\n");
-            bw.write(reportedMessages.get(key) + "\n");
+            Integer taskCount = jiraTasks.get(key).size();
+            bw.write(taskCount + "\n");
+            for (int i = 0; i < taskCount; i++) {
+                bw.write(jiraTasks.get(key).get(i).getIssue() + "\n");
+                bw.write(jiraTasks.get(key).get(i).getClosed() + "\n");
+                bw.write(jiraTasks.get(key).get(i).getLastUpdate().getTime() + "\n");
+            }
         }
         bw.close();
         Files.move(Paths.get(savedStateFile + stamp), Paths.get(savedStateFile), ATOMIC_MOVE);
     }
 
-    private static void generateHtmlWithEpicTemplateEngine() throws IOException, NoSuchAlgorithmException {
+    private static void generateHtmlWithEpicTemplateEngine() throws IOException {
         String fullFile = options.getProperty("apache_root") + "/current-full.html";
         String liteFile = options.getProperty("apache_root") + "/current.html";
         String stamp = new Date().getTime() + "" + new Random().nextLong();
@@ -202,7 +225,7 @@ public class Panic implements MessageOutput {
         Files.move(Paths.get(fullFile + stamp), Paths.get(fullFile), ATOMIC_MOVE);
     }
 
-    private static void createJiraTask(Map.Entry<String, LogEntry> e) throws IOException, NoSuchAlgorithmException {
+    private static String createJiraTask(Map.Entry<String, LogEntry> e) throws IOException {
         String shortMessage = e.getValue().substringForMatching;
         String fullMessage = "[PANIC] more than " + e.getValue().count + " " +
                 (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes\n\n{noformat}\n";
@@ -223,37 +246,82 @@ public class Panic implements MessageOutput {
         JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
                 options.getProperty("jira_user"),
                 options.getProperty("jira_password"));
-        client.createIssue(shortMessage, fullMessage);
+        return client.createIssue(shortMessage, fullMessage);
     }
 
-    private static void reportMessages() throws NoSuchAlgorithmException, InterruptedException {
+    private static void reportMessages() throws IOException {
         if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > Integer.parseInt(options.getProperty("reporting_interval"))) {
             LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
             for (Map.Entry<String, LogEntry> e : combined) {
                 if ((e.getValue().level <= 3 && e.getValue().count >= Integer.parseInt(options.getProperty("error_reporting_threshold")))
                         || (e.getValue().level == 4 && e.getValue().count >= Integer.parseInt(options.getProperty("warning_reporting_threshold")))) {
                     double bestSimilarity = 0;
-                    for (String reported : reportedMessages.keySet()) {
-                        double curSimilarity = StrikeAMatch.compareStrings(reported.substring(0, Math.min(reported.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
+                    String mostSimilarTaskSummary = null;
+                    for (String reported : jiraTasks.keySet()) {
+                        double curSimilarity = StrikeAMatch.compareStrings(reported, e.getValue().substringForMatching);
                         if (curSimilarity > bestSimilarity) {
                             bestSimilarity = curSimilarity;
-                            if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
-                                break;
-                            }
+                            mostSimilarTaskSummary = reported;
                         }
                     }
                     if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
-                        continue;
+                        Boolean hasOpenTasks = false;
+                        for (JiraTask task : jiraTasks.get(mostSimilarTaskSummary)) {
+                            if (!task.getClosed()) {
+                                hasOpenTasks = true;
+                                if (task.getLastUpdate().getTime() / 1000 + Integer.parseInt(options.getProperty("report_repeat_interval")) < new Date().getTime() / 1000) {
+                                    JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
+                                            options.getProperty("jira_user"),
+                                            options.getProperty("jira_password"));
+                                    client.commentOnIssue(task.getIssue(), "Reminder: the problem still persists.");
+                                    task.setLastUpdate(new Date());
+                                }
+                            }
+                        }
+                        if (!hasOpenTasks) {
+                            if (lastTimeJiraTaskCreated == null || new Date().getTime() - lastTimeJiraTaskCreated.getTime() > Integer.parseInt(options.getProperty("jira_throttle_interval"))) {
+                                String issueKey = createJiraTask(e);
+                                if (issueKey != null) {
+                                    JiraTask task = new JiraTask(e.getValue().substringForMatching, issueKey, false, new Date());
+                                    jiraTasks.get(mostSimilarTaskSummary).add(task);
+                                    lastReportedJiraTask = task;
+                                    lastTimeJiraTaskCreated = new Date();
+                                }
+                                lastTimeMessagesReported = new Date();
+                            }
+                            else {
+                                if (lastReportedJiraTask != null) {
+                                    JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
+                                            options.getProperty("jira_user"),
+                                            options.getProperty("jira_password"));
+                                    client.commentOnIssue(lastReportedJiraTask.getIssue(), "Maybe related problem: \n\n" + e.getKey());
+                                    lastReportedJiraTask.setLastUpdate(new Date());
+                                }
+                            }
+                        }
                     }
-                    try {
-                        createJiraTask(e);
-                        reportedMessages.put(e.getKey(), new Date().getTime());
-                    }
-                    catch (IOException exception) {
-                        exception.printStackTrace();
-                    }
-                    finally {
-                        lastTimeMessagesReported = new Date();
+                    else {
+                        if (lastTimeJiraTaskCreated == null || new Date().getTime() - lastTimeJiraTaskCreated.getTime() > Integer.parseInt(options.getProperty("jira_throttle_interval"))) {
+                            String issueKey = createJiraTask(e);
+                            if (issueKey != null) {
+                                JiraTask task = new JiraTask(e.getValue().substringForMatching, issueKey, false, new Date());
+                                CopyOnWriteArrayList<JiraTask> taskList = new CopyOnWriteArrayList<JiraTask>();
+                                taskList.add(task);
+                                jiraTasks.put(e.getValue().substringForMatching, taskList);
+                                lastReportedJiraTask = task;
+                                lastTimeJiraTaskCreated = new Date();
+                            }
+                            lastTimeMessagesReported = new Date();
+                        }
+                        else {
+                            if (lastReportedJiraTask != null) {
+                                JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
+                                        options.getProperty("jira_user"),
+                                        options.getProperty("jira_password"));
+                                client.commentOnIssue(lastReportedJiraTask.getIssue(), "Maybe related problem: \n\n" + e.getKey());
+                                lastReportedJiraTask.setLastUpdate(new Date());
+                            }
+                        }
                     }
                 }
             }
@@ -267,6 +335,7 @@ public class Panic implements MessageOutput {
             if (startedProcessing == null) {
                 startedProcessing = new Date();
                 lastTimeMessagesReported = new Date(new Date().getTime() - Integer.parseInt(options.getProperty("reporting_interval")));
+                lastTimeJiraTaskCreated = new Date(new Date().getTime() - Integer.parseInt(options.getProperty("jira_throttle_interval")));
             } else if (curTimestamp - startedProcessing.getTime() / 1000 > 600) {
                 messageCountProcessed = (messageCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) * 30;
                 errWarnCountProcessed = (errWarnCountProcessed / (Math.max((new Date().getTime() - startedProcessing.getTime()) / 1000, 1))) * 30;
@@ -361,16 +430,6 @@ public class Panic implements MessageOutput {
             for (Long key : keysToRemove) {
                 intervals.remove(key);
             }
-            /* clean up reportedMessages */
-            /*HashSet<String> rmKeysToRemove = new HashSet<String>();
-            for (String key : reportedMessages.keySet()) {
-                if (curTimestamp - reportedMessages.get(key) / 1000 > Integer.parseInt(options.getProperty("report_repeat_interval"))) {
-                    rmKeysToRemove.add(key);
-                }
-            }
-            for (String key : rmKeysToRemove) {
-                reportedMessages.remove(key);
-            }*/
             if (new Random().nextInt(3) == 0) {
                 saveState();
             }
