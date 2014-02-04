@@ -45,42 +45,6 @@ public class Panic implements MessageOutput {
         }
     }
 
-    /*
-        Returns 0 < similarity < 1 of two strings
-        Adapted from:
-        http://www.catalysoft.com/articles/StrikeAMatch.html
-     */
-    private static double compareStrings(String str1, String str2) {
-        char[] charStr1 = str1.toUpperCase().toCharArray();
-        char[] charStr2 = str2.toUpperCase().toCharArray();
-        ArrayList<Integer> pairs1 = wordLetterPairs(charStr1);
-        ArrayList<Integer> pairs2 = wordLetterPairs(charStr2);
-        int intersection = 0;
-        int union = pairs1.size() + pairs2.size();
-        for (Integer pairIndex1 : pairs1) {
-            for (int j = 0; j < pairs2.size(); j++) {
-                Integer pairIndex2 = pairs2.get(j);
-                if (charStr1[pairIndex1] == charStr2[pairIndex2] &&
-                        charStr1[pairIndex1 + 1] == charStr2[pairIndex2 + 1]) {
-                    intersection++;
-                    pairs2.remove(j);
-                    break;
-                }
-            }
-        }
-        return (2.0 * intersection) / union;
-    }
-
-    private static ArrayList<Integer> wordLetterPairs(char[] str) {
-        ArrayList<Integer> allPairs = new ArrayList<Integer>();
-        for (int i = 0; i < str.length; i++) {
-            if (i < str.length - 1 && !Character.isSpaceChar(str[i]) && !Character.isSpaceChar(str[i + 1])) {
-                allPairs.add(i);
-            }
-        }
-        return allPairs;
-    }
-
     private static String calcMD5sum(String s) throws NoSuchAlgorithmException, UnsupportedEncodingException {
         MessageDigest md = MessageDigest.getInstance("MD5");
         byte[] rawDigest = md.digest(s.getBytes("UTF-8"));
@@ -270,7 +234,7 @@ public class Panic implements MessageOutput {
                         || (e.getValue().level == 4 && e.getValue().count >= Integer.parseInt(options.getProperty("warning_reporting_threshold")))) {
                     double bestSimilarity = 0;
                     for (String reported : reportedMessages.keySet()) {
-                        double curSimilarity = compareStrings(reported.substring(0, Math.min(reported.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
+                        double curSimilarity = StrikeAMatch.compareStrings(reported.substring(0, Math.min(reported.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
                         if (curSimilarity > bestSimilarity) {
                             bestSimilarity = curSimilarity;
                             if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold"))) {
@@ -336,7 +300,7 @@ public class Panic implements MessageOutput {
                         if (listToMatch != null) {
                             for (Map.Entry<String, LogEntry> e : listToMatch) {
                                 if (e.getKey().length() > 1) {
-                                    double curSimilarity = compareStrings(escaped.substring(0, Math.min(escaped.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
+                                    double curSimilarity = StrikeAMatch.compareStrings(escaped.substring(0, Math.min(escaped.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
                                     if (curSimilarity > bestSimilarity) {
                                         bestSimilarity = curSimilarity;
                                         mostSimilar = e.getKey();
