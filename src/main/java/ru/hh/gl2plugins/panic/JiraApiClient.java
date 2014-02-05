@@ -7,16 +7,14 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.AuthCache;
 import org.apache.http.client.ClientProtocolException;
-import org.apache.http.client.CredentialsProvider;
 import org.apache.http.client.ResponseHandler;
 import org.apache.http.client.methods.HttpPost;
-import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.client.protocol.ClientContext;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.auth.BasicScheme;
 import org.apache.http.impl.client.BasicAuthCache;
-import org.apache.http.impl.client.BasicCredentialsProvider;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.protocol.BasicHttpContext;
 import org.apache.http.util.EntityUtils;
 import org.codehaus.jettison.json.JSONObject;
 
@@ -39,17 +37,15 @@ public class JiraApiClient {
         String result = "";
 
         HttpHost host = new HttpHost("jira.hh.ru", 80, "http");
-        CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
-        credentialsProvider.setCredentials(new AuthScope(host.getHostName(), host.getPort()),
-                new UsernamePasswordCredentials(jiraUser, jiraPassword));
-        CloseableHttpClient client = HttpClients.custom().setDefaultCredentialsProvider(credentialsProvider).build();
+        DefaultHttpClient client = new DefaultHttpClient();
         try {
+            client.getCredentialsProvider().setCredentials(new AuthScope(host.getHostName(), host.getPort()),
+                    new UsernamePasswordCredentials(jiraUser, jiraPassword));
             AuthCache authCache = new BasicAuthCache();
             BasicScheme basicAuth = new BasicScheme();
             authCache.put(host, basicAuth);
-            HttpClientContext context = HttpClientContext.create();
-            context.setCredentialsProvider(credentialsProvider);
-            context.setAuthCache(authCache);
+            BasicHttpContext context = new BasicHttpContext();
+            context.setAttribute(ClientContext.AUTH_CACHE, authCache);
 
             HttpPost post = new HttpPost(jiraUrl + subUrl);
             post.addHeader("Content-Type", "application/json");
@@ -70,10 +66,10 @@ public class JiraApiClient {
                     }
                 }
             };
-            result = client.execute(post, handler, context);
+            result = client.execute(host, post, handler, context);
         }
         finally {
-            client.close();
+            client.getConnectionManager().shutdown();
         }
         return result;
     }
