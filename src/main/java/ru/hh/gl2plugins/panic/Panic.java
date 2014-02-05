@@ -229,7 +229,7 @@ public class Panic implements MessageOutput {
         String shortMessage = e.getValue().substringForMatching;
         String fullMessage = "[PANIC] more than " + e.getValue().count + " " +
                 (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes\n\n{noformat}\n";
-        File fullMessageFile = new File("/tmp/panic-www/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
+        File fullMessageFile = new File(options.getProperty("work_directory") + "/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
         if (fullMessageFile.exists()) {
             BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
             String line = br.readLine();
@@ -395,7 +395,7 @@ public class Panic implements MessageOutput {
                     if (bestSimilarity <= Double.parseDouble(options.getProperty("merge_threshold"))) {
                         existingByFirstTwoLetters.get(escaped.substring(0, 2)).add(new AbstractMap.SimpleEntry<String, LogEntry>(escaped, newEntry));
                     }
-                    String filePath = "/tmp/panic-www/full_messages/" + calcMD5sum(escaped) + ".txt";
+                    String filePath = options.getProperty("work_directory") + "/full_messages/" + calcMD5sum(escaped) + ".txt";
                     if (!new File(filePath).exists()) {
                         String stamp = new Date().getTime() + "" + new Random().nextLong();
                         BufferedWriter bw = new BufferedWriter(new FileWriter(filePath + stamp));
