@@ -396,7 +396,7 @@ public class Panic implements MessageOutput {
                         existingByFirstTwoLetters.get(escaped.substring(0, 2)).add(new AbstractMap.SimpleEntry<String, LogEntry>(escaped, newEntry));
                     }
                     String filePath = options.getProperty("work_directory") + "/full_messages/" + calcMD5sum(escaped) + ".txt";
-                    if (!new File(filePath).exists()) {
+                    if (new Random().nextInt(8) == 0) {
                         String stamp = new Date().getTime() + "" + new Random().nextLong();
                         BufferedWriter bw = new BufferedWriter(new FileWriter(filePath + stamp));
                         bw.write("short message example\n------------\n");
