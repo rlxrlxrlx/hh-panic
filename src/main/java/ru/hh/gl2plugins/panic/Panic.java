@@ -136,7 +136,7 @@ public class Panic implements MessageOutput {
                     for (int i = 0; i < taskCount; i++) {
                         String issue = br.readLine();
                         Boolean closed = Boolean.parseBoolean(br.readLine());
-                        Date lastUpdate = new Date(Long.parseLong(br.readLine()));
+                        Date lastUpdate = new Date(Long.parseLong(br.readLine()) * 1000);
                         JiraTask task = new JiraTask(summary, issue, closed, lastUpdate);
                         taskList.add(task);
                     }
@@ -173,7 +173,7 @@ public class Panic implements MessageOutput {
             for (int i = 0; i < taskCount; i++) {
                 bw.write(jiraTasks.get(key).get(i).getIssue() + "\n");
                 bw.write(jiraTasks.get(key).get(i).getClosed() + "\n");
-                bw.write(jiraTasks.get(key).get(i).getLastUpdate().getTime() + "\n");
+                bw.write(jiraTasks.get(key).get(i).getLastUpdate().getTime() / 1000 + "\n");
             }
         }
         bw.close();
