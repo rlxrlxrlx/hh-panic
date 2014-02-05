@@ -428,6 +428,14 @@ public class Panic implements MessageOutput {
                     if (new Random().nextInt(8) == 0) {
                         String stamp = new Date().getTime() + "" + new Random().nextLong();
                         BufferedWriter bw = new BufferedWriter(new FileWriter(filePath + stamp));
+                        if (m.getHost() != null) {
+                            bw.write("example host: " + m.getHost() + "\n\n");
+                        }
+                        if (m.getAdditionalData() != null &&
+                                m.getAdditionalData().containsKey("_request_id") &&
+                                m.getAdditionalData().get("_request_id") != null) {
+                            bw.write("example request_id: " + m.getAdditionalData().get("_request_id") + "\n\n");
+                        }
                         bw.write("short message example\n------------\n");
                         bw.write(m.getShortMessage());
                         bw.write("\n\nfull message example\n------------\n");
