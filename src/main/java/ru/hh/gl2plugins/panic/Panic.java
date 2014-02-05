@@ -211,9 +211,38 @@ public class Panic implements MessageOutput {
 
         int cnt = 0;
         for (Map.Entry<String, LogEntry> e : sorted) {
-            bw.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + "><td>" + e.getValue().count + "</td><td>" + e.getValue().streams + "</td><td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td><td>" + e.getKey() + "</td></tr>\n");
-            if (cnt < 100) {
-                bwLite.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + "><td>" + e.getValue().count + "</td><td>" + e.getValue().streams + "</td><td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td><td>" + e.getKey() + "</td></tr>\n");
+            bw.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + ">" +
+                    "<td>" + e.getValue().count + "</td>" +
+                    "<td>" + e.getValue().streams + "</td>" +
+                    "<td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td>" +
+                    "<td>" + e.getKey() + "</td></tr>\n");
+            if (cnt < 50) {
+                String jiraTasksLink = "";
+                double bestSimilarity = 0;
+                CopyOnWriteArrayList<JiraTask> taskList = null;
+                for (String reported : jiraTasks.keySet()) {
+                    double curSimilarity = StrikeAMatch.compareStrings(reported, e.getValue().substringForMatching);
+                    if (curSimilarity > bestSimilarity) {
+                        bestSimilarity = curSimilarity;
+                        taskList = jiraTasks.get(reported);
+                    }
+                }
+                if (bestSimilarity > Double.parseDouble(options.getProperty("merge_threshold")) && taskList != null) {
+                    for (JiraTask task : taskList) {
+                        if (task.getClosed()) {
+                            jiraTasksLink += "<a style='text-decoration:line-through;' href='https://jira.hh.ru/browse/" + task.getIssue() + "'>" + task.getIssue() + "</a> ";
+                        }
+                        else {
+                            jiraTasksLink += "<a href='https://jira.hh.ru/browse/" + task.getIssue() + "'>" + task.getIssue() + "</a> ";
+                        }
+                    }
+                }
+                bwLite.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + ">" +
+                        "<td>" + e.getValue().count + "</td>" +
+                        "<td>" + e.getValue().streams + "</td>" +
+                        "<td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td>" +
+                        "<td>" + jiraTasksLink + "</td>" +
+                        "<td>" + e.getKey() + "</td></tr>\n");
             }
             cnt++;
         }
