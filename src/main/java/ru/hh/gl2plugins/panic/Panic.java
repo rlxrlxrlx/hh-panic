@@ -137,7 +137,8 @@ public class Panic implements MessageOutput {
                         String issue = br.readLine();
                         Boolean closed = Boolean.parseBoolean(br.readLine());
                         Date lastUpdate = new Date(Long.parseLong(br.readLine()) * 1000);
-                        JiraTask task = new JiraTask(summary, issue, closed, lastUpdate);
+                        Date lastStatusSync = new Date(Long.parseLong(br.readLine()) * 1000);
+                        JiraTask task = new JiraTask(summary, issue, closed, lastUpdate, lastStatusSync);
                         taskList.add(task);
                     }
                     jiraTasks.put(summary, taskList);
@@ -174,6 +175,7 @@ public class Panic implements MessageOutput {
                 bw.write(jiraTasks.get(key).get(i).getIssue() + "\n");
                 bw.write(jiraTasks.get(key).get(i).getClosed() + "\n");
                 bw.write(jiraTasks.get(key).get(i).getLastUpdate().getTime() / 1000 + "\n");
+                bw.write(jiraTasks.get(key).get(i).getLastStatusSync().getTime() / 1000 + "\n");
             }
         }
         bw.close();
@@ -311,7 +313,7 @@ public class Panic implements MessageOutput {
                             if (lastTimeJiraTaskCreated == null || new Date().getTime() - lastTimeJiraTaskCreated.getTime() > Integer.parseInt(options.getProperty("jira_throttle_interval"))) {
                                 String issueKey = createJiraTask(e);
                                 if (issueKey != null) {
-                                    JiraTask task = new JiraTask(e.getValue().substringForMatching, issueKey, false, new Date());
+                                    JiraTask task = new JiraTask(e.getValue().substringForMatching, issueKey, false, new Date(), new Date());
                                     jiraTasks.get(mostSimilarTaskSummary).add(task);
                                     lastReportedJiraTask = task;
                                     lastTimeJiraTaskCreated = new Date();
@@ -333,7 +335,7 @@ public class Panic implements MessageOutput {
                         if (lastTimeJiraTaskCreated == null || new Date().getTime() - lastTimeJiraTaskCreated.getTime() > Integer.parseInt(options.getProperty("jira_throttle_interval"))) {
                             String issueKey = createJiraTask(e);
                             if (issueKey != null) {
-                                JiraTask task = new JiraTask(e.getValue().substringForMatching, issueKey, false, new Date());
+                                JiraTask task = new JiraTask(e.getValue().substringForMatching, issueKey, false, new Date(), new Date());
                                 CopyOnWriteArrayList<JiraTask> taskList = new CopyOnWriteArrayList<JiraTask>();
                                 taskList.add(task);
                                 jiraTasks.put(e.getValue().substringForMatching, taskList);
@@ -352,6 +354,21 @@ public class Panic implements MessageOutput {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private static void syncTaskStatuses() throws IOException {
+        Long curTimestamp = new Date().getTime();
+        JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
+                options.getProperty("jira_user"),
+                options.getProperty("jira_password"));
+        for (String key : jiraTasks.keySet()) {
+            for (JiraTask task : jiraTasks.get(key)) {
+                if (curTimestamp - task.getLastStatusSync().getTime() > Integer.parseInt(options.getProperty("jira_throttle_interval"))) {
+                    client.syncTaskStatus(task);
+                    task.setLastStatusSync(new Date());
                 }
             }
         }
@@ -472,6 +489,9 @@ public class Panic implements MessageOutput {
             }
             if (new Random().nextInt(5) == 0) {
                 reportMessages();
+            }
+            if (new Random().nextInt(15) == 0) {
+                syncTaskStatuses();
             }
         }
     }

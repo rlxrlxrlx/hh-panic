@@ -7,12 +7,14 @@ public class JiraTask {
     private final String issue;
     private Boolean closed;
     private Date lastUpdate;
+    private Date lastStatusSync;
 
-    public JiraTask(String summary, String issue, Boolean closed, Date lastUpdate) {
+    public JiraTask(String summary, String issue, Boolean closed, Date lastUpdate, Date lastStatusSync) {
         this.summary = summary;
         this.issue = issue;
         this.closed = closed;
         this.lastUpdate = lastUpdate;
+        this.lastStatusSync = lastStatusSync;
     }
 
     public Date getLastUpdate() {
@@ -37,5 +39,13 @@ public class JiraTask {
 
     public String getIssue() {
         return issue;
+    }
+
+    public Date getLastStatusSync() {
+        return lastStatusSync;
+    }
+
+    public void setLastStatusSync(Date lastStatusSync) {
+        this.lastStatusSync = lastStatusSync;
     }
 }
