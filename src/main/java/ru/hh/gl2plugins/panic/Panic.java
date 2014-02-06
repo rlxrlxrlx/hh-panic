@@ -326,6 +326,7 @@ public class Panic implements MessageOutput {
                                             options.getProperty("jira_user"),
                                             options.getProperty("jira_password"));
                                     client.commentOnIssue(lastReportedJiraTask.getIssue(), "Maybe related problem: \n\n" + e.getKey());
+                                    jiraTasks.get(mostSimilarTaskSummary).add(lastReportedJiraTask);
                                     lastReportedJiraTask.setLastUpdate(new Date());
                                 }
                             }
@@ -350,6 +351,9 @@ public class Panic implements MessageOutput {
                                         options.getProperty("jira_user"),
                                         options.getProperty("jira_password"));
                                 client.commentOnIssue(lastReportedJiraTask.getIssue(), "Maybe related problem: \n\n" + e.getKey());
+                                CopyOnWriteArrayList<JiraTask> taskList = new CopyOnWriteArrayList<JiraTask>();
+                                taskList.add(lastReportedJiraTask);
+                                jiraTasks.put(e.getValue().substringForMatching, taskList);
                                 lastReportedJiraTask.setLastUpdate(new Date());
                             }
                         }
