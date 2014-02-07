@@ -368,11 +368,17 @@ public class Panic implements MessageOutput {
         JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
                 options.getProperty("jira_user"),
                 options.getProperty("jira_password"));
+        HashSet<String> syncedTasks = new HashSet<String>();
         for (String key : jiraTasks.keySet()) {
             for (JiraTask task : jiraTasks.get(key)) {
-                if (curTimestamp - task.getLastStatusSync().getTime() > Integer.parseInt(options.getProperty("jira_throttle_interval"))) {
-                    client.syncTaskStatus(task);
-                    task.setLastStatusSync(new Date());
+                if (!task.getClosed()) {
+                    if (curTimestamp - task.getLastStatusSync().getTime() > Integer.parseInt(options.getProperty("jira_throttle_interval"))) {
+                        if (!syncedTasks.contains(task.getIssue())) {
+                            client.syncTaskStatus(task);
+                            syncedTasks.add(task.getIssue());
+                        }
+                        task.setLastStatusSync(new Date());
+                    }
                 }
             }
         }
