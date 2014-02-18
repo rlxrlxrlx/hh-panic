@@ -274,10 +274,26 @@ public class Panic implements MessageOutput {
         }
         fullMessage += "\n{noformat}\n\nhttp://graylog.hh.ru/panic/current.html";
 
+        System.out.println("Creating jira task. Level: " + e.getValue().level + ", count: " +
+                e.getValue().count + ", issue: " + e.getValue().substringForMatching
+        );
+
         JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
                 options.getProperty("jira_user"),
                 options.getProperty("jira_password"));
         return client.createIssue(shortMessage, fullMessage);
+    }
+
+    private static void commentOnJiraTask(JiraTask task, String message, Map.Entry<String, LogEntry> e) throws IOException {
+        System.out.println("Commenting on jira task " + task.getIssue() + ". Level: " + e.getValue().level + ", count: " +
+                e.getValue().count + ", issue: " + e.getValue().substringForMatching
+        );
+
+        JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
+                options.getProperty("jira_user"),
+                options.getProperty("jira_password"));
+        client.commentOnIssue(task.getIssue(), message);
+        task.setLastUpdate(new Date());
     }
 
     private static void reportMessages() throws IOException {
@@ -301,11 +317,7 @@ public class Panic implements MessageOutput {
                             if (!task.getClosed()) {
                                 hasOpenTasks = true;
                                 if (task.getLastUpdate().getTime() / 1000 + Integer.parseInt(options.getProperty("report_repeat_interval")) < new Date().getTime() / 1000) {
-                                    JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
-                                            options.getProperty("jira_user"),
-                                            options.getProperty("jira_password"));
-                                    client.commentOnIssue(task.getIssue(), "Reminder: the problem still persists.");
-                                    task.setLastUpdate(new Date());
+                                    commentOnJiraTask(task, "Reminder: the problem still persists.", e);
                                 }
                             }
                         }
@@ -322,12 +334,8 @@ public class Panic implements MessageOutput {
                             }
                             else {
                                 if (lastReportedJiraTask != null) {
-                                    JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
-                                            options.getProperty("jira_user"),
-                                            options.getProperty("jira_password"));
-                                    client.commentOnIssue(lastReportedJiraTask.getIssue(), "Maybe related problem: \n\n" + e.getKey());
+                                    commentOnJiraTask(lastReportedJiraTask, "Maybe related problem: \n\n" + e.getKey(), e);
                                     jiraTasks.get(mostSimilarTaskSummary).add(lastReportedJiraTask);
-                                    lastReportedJiraTask.setLastUpdate(new Date());
                                 }
                             }
                         }
@@ -347,14 +355,10 @@ public class Panic implements MessageOutput {
                         }
                         else {
                             if (lastReportedJiraTask != null) {
-                                JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
-                                        options.getProperty("jira_user"),
-                                        options.getProperty("jira_password"));
-                                client.commentOnIssue(lastReportedJiraTask.getIssue(), "Maybe related problem: \n\n" + e.getKey());
+                                commentOnJiraTask(lastReportedJiraTask, "Maybe related problem: \n\n" + e.getKey(), e);
                                 CopyOnWriteArrayList<JiraTask> taskList = new CopyOnWriteArrayList<JiraTask>();
                                 taskList.add(lastReportedJiraTask);
                                 jiraTasks.put(e.getValue().substringForMatching, taskList);
-                                lastReportedJiraTask.setLastUpdate(new Date());
                             }
                         }
                     }
