@@ -33,6 +33,8 @@ public class Panic implements MessageOutput {
     private static JiraTask lastReportedJiraTask = null;
     private static ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>> intervals = new ConcurrentHashMap<Long, ConcurrentHashMap<String, LogEntry>>();
     private static ConcurrentHashMap<String, CopyOnWriteArrayList<JiraTask>> jiraTasks = new ConcurrentHashMap<String, CopyOnWriteArrayList<JiraTask>>();
+    private static String queuedCommentsForLastTask = "";
+    private static Date lastTimeMaybeRelatedCommented = null;
 
     private static class LogEntry {
         Integer level;
@@ -302,7 +304,6 @@ public class Panic implements MessageOutput {
     private static void reportMessages() throws IOException {
         if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > Integer.parseInt(options.getProperty("reporting_interval"))) {
             LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
-            String queuedCommentsForLastTask = "";
             for (Map.Entry<String, LogEntry> e : combined) {
                 if ((e.getValue().level <= 3 && e.getValue().count >= Integer.parseInt(options.getProperty("error_reporting_threshold")))
                         || (e.getValue().level == 4 && e.getValue().count >= Integer.parseInt(options.getProperty("warning_reporting_threshold")))) {
@@ -368,8 +369,10 @@ public class Panic implements MessageOutput {
                     }
                 }
             }
-            if (queuedCommentsForLastTask.length() > 0) {
+            if (lastTimeMaybeRelatedCommented == null || new Date().getTime() - lastTimeMaybeRelatedCommented.getTime() > Integer.parseInt(options.getProperty("jira_maybe_related_interval")) && queuedCommentsForLastTask.length() > 0) {
                 commentOnJiraTask(lastReportedJiraTask, "Maybe related problems: \n\n" + queuedCommentsForLastTask, null);
+                lastTimeMaybeRelatedCommented = new Date();
+                queuedCommentsForLastTask = "";
             }
         }
     }
