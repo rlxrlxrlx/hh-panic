@@ -48,7 +48,8 @@ public class Panic implements MessageOutput {
         }
     }
 
-    private static String calcMD5sum(String s) {
+    private static String calcMD5sum(String s, int level) {
+        s = "[" + level + "] " + s;
         StringBuilder sb = new StringBuilder();
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
@@ -216,7 +217,7 @@ public class Panic implements MessageOutput {
             bw.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + ">" +
                     "<td>" + e.getValue().count + "</td>" +
                     "<td>" + e.getValue().streams + "</td>" +
-                    "<td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td>" +
+                    "<td><a href='/panic/full_messages/" + calcMD5sum(e.getKey(), e.getValue().level) + ".txt'>example</a></td>" +
                     "<td>" + e.getKey() + "</td></tr>\n");
             if (cnt < 50) {
                 String jiraTasksLink = "";
@@ -242,7 +243,7 @@ public class Panic implements MessageOutput {
                 bwLite.write("<tr" + (e.getValue().level <= 3 ? " class='danger'" : "") + ">" +
                         "<td>" + e.getValue().count + "</td>" +
                         "<td>" + e.getValue().streams + "</td>" +
-                        "<td><a href='/panic/full_messages/" + calcMD5sum(e.getKey()) + ".txt'>example</a></td>" +
+                        "<td><a href='/panic/full_messages/" + calcMD5sum(e.getKey(), e.getValue().level) + ".txt'>example</a></td>" +
                         "<td>" + jiraTasksLink + "</td>" +
                         "<td>" + e.getKey() + "</td></tr>\n");
             }
@@ -260,7 +261,7 @@ public class Panic implements MessageOutput {
         String shortMessage = e.getValue().substringForMatching;
         String fullMessage = "[PANIC] more than " + e.getValue().count + " " +
                 (e.getValue().level <= 3 ? "errors" : "warnings") + " in 10 minutes\n\n{noformat}\n";
-        File fullMessageFile = new File(options.getProperty("work_directory") + "/full_messages/" + calcMD5sum(e.getKey()) + ".txt");
+        File fullMessageFile = new File(options.getProperty("work_directory") + "/full_messages/" + calcMD5sum(e.getKey(), e.getValue().level) + ".txt");
         if (fullMessageFile.exists()) {
             BufferedReader br = new BufferedReader(new FileReader(fullMessageFile));
             String line = br.readLine();
@@ -430,6 +431,9 @@ public class Panic implements MessageOutput {
                             for (Map.Entry<String, LogEntry> e : listToMatch) {
                                 if (e.getKey().length() > 1) {
                                     double curSimilarity = StrikeAMatch.compareStrings(escaped.substring(0, Math.min(escaped.length(), Integer.parseInt(options.getProperty("substring_length")))), e.getValue().substringForMatching);
+                                    if (e.getValue().level != m.getLevel()) {
+                                        curSimilarity -= 1;
+                                    }
                                     if (curSimilarity > bestSimilarity) {
                                         bestSimilarity = curSimilarity;
                                         mostSimilar = e.getKey();
@@ -453,9 +457,10 @@ public class Panic implements MessageOutput {
                             new LogEntry(m.getLevel(), 1, getStreamsString(m.getStreams()), escaped.substring(0, Math.min(escaped.length(), Integer.parseInt(options.getProperty("substring_length")))));
                     intervals.get(curInterval).put(escaped, newEntry);
                     if (bestSimilarity <= Double.parseDouble(options.getProperty("merge_threshold"))) {
+                        // FIXME: NPE here
                         existingByFirstTwoLetters.get(escaped.substring(0, 2)).add(new AbstractMap.SimpleEntry<String, LogEntry>(escaped, newEntry));
                     }
-                    String filePath = options.getProperty("work_directory") + "/full_messages/" + calcMD5sum(escaped) + ".txt";
+                    String filePath = options.getProperty("work_directory") + "/full_messages/" + calcMD5sum(escaped, m.getLevel()) + ".txt";
                     if (new Random().nextInt(8) == 0) {
                         String stamp = new Date().getTime() + "" + new Random().nextLong();
                         BufferedWriter bw = new BufferedWriter(new FileWriter(filePath + stamp));
