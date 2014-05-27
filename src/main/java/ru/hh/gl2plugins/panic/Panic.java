@@ -286,9 +286,11 @@ public class Panic implements MessageOutput {
     }
 
     private static void commentOnJiraTask(JiraTask task, String message, Map.Entry<String, LogEntry> e) throws IOException {
-        System.out.println("Commenting on jira task " + task.getIssue() + ". Level: " + e.getValue().level + ", count: " +
-                e.getValue().count + ", issue: " + e.getValue().substringForMatching
-        );
+        if (e != null) {
+            System.out.println("Commenting on jira task " + task.getIssue() + ". Level: " + e.getValue().level + ", count: " +
+                    e.getValue().count + ", issue: " + e.getValue().substringForMatching
+            );
+        }
 
         JiraApiClient client = new JiraApiClient("http://jira.hh.ru/rest/api/2",
                 options.getProperty("jira_user"),
@@ -300,6 +302,7 @@ public class Panic implements MessageOutput {
     private static void reportMessages() throws IOException {
         if (lastTimeMessagesReported != null && new Date().getTime() - lastTimeMessagesReported.getTime() > Integer.parseInt(options.getProperty("reporting_interval"))) {
             LinkedList<Map.Entry<String, LogEntry>> combined = combineIntervals();
+            String queuedCommentsForLastTask = "";
             for (Map.Entry<String, LogEntry> e : combined) {
                 if ((e.getValue().level <= 3 && e.getValue().count >= Integer.parseInt(options.getProperty("error_reporting_threshold")))
                         || (e.getValue().level == 4 && e.getValue().count >= Integer.parseInt(options.getProperty("warning_reporting_threshold")))) {
@@ -335,7 +338,7 @@ public class Panic implements MessageOutput {
                             }
                             else {
                                 if (lastReportedJiraTask != null) {
-                                    commentOnJiraTask(lastReportedJiraTask, "Maybe related problem: \n\n" + e.getKey(), e);
+                                    queuedCommentsForLastTask += e.getKey() + "\n\n-----------------------------------\n\n";
                                     jiraTasks.get(mostSimilarTaskSummary).add(lastReportedJiraTask);
                                 }
                             }
@@ -356,7 +359,7 @@ public class Panic implements MessageOutput {
                         }
                         else {
                             if (lastReportedJiraTask != null) {
-                                commentOnJiraTask(lastReportedJiraTask, "Maybe related problem: \n\n" + e.getKey(), e);
+                                queuedCommentsForLastTask += e.getKey() + "\n\n-----------------------------------\n\n";
                                 CopyOnWriteArrayList<JiraTask> taskList = new CopyOnWriteArrayList<JiraTask>();
                                 taskList.add(lastReportedJiraTask);
                                 jiraTasks.put(e.getValue().substringForMatching, taskList);
@@ -364,6 +367,9 @@ public class Panic implements MessageOutput {
                         }
                     }
                 }
+            }
+            if (queuedCommentsForLastTask.length() > 0) {
+                commentOnJiraTask(lastReportedJiraTask, "Maybe related problems: \n\n" + queuedCommentsForLastTask, null);
             }
         }
     }
