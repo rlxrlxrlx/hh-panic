@@ -369,7 +369,7 @@ public class Panic implements MessageOutput {
                     }
                 }
             }
-            if (lastTimeMaybeRelatedCommented == null || new Date().getTime() - lastTimeMaybeRelatedCommented.getTime() > Integer.parseInt(options.getProperty("jira_maybe_related_interval")) && queuedCommentsForLastTask.length() > 0) {
+            if ((lastTimeMaybeRelatedCommented == null || new Date().getTime() - lastTimeMaybeRelatedCommented.getTime() > Integer.parseInt(options.getProperty("jira_maybe_related_interval"))) && queuedCommentsForLastTask.length() > 0) {
                 commentOnJiraTask(lastReportedJiraTask, "Maybe related problems: \n\n" + queuedCommentsForLastTask, null);
                 lastTimeMaybeRelatedCommented = new Date();
                 queuedCommentsForLastTask = "";
