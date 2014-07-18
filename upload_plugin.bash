@@ -1,6 +1,6 @@
 #!/bin/bash
 
-. ${HOME}/.graylog-plugin-uploader.conf.bash
+. ${HOME}/.config/.graylog-plugin-uploader.conf.bash
 
 PANIC_CHECKOUT_DIR=~/idea/hh-panic
 cd ${PANIC_CHECKOUT_DIR}
