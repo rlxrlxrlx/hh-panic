@@ -141,7 +141,21 @@ public class Panic implements MessageOutput {
                         Boolean closed = Boolean.parseBoolean(br.readLine());
                         Date lastUpdate = new Date(Long.parseLong(br.readLine()) * 1000);
                         Date lastStatusSync = new Date(Long.parseLong(br.readLine()) * 1000);
-                        JiraTask task = new JiraTask(summary, issue, closed, lastUpdate, lastStatusSync);
+
+                        JiraTask task = null;
+                        boolean alreadyExists = false;
+                        for (String problemKey : jiraTasks.keySet()) {
+                            for (JiraTask maybeTheSameTask : jiraTasks.get(problemKey)) {
+                                if (maybeTheSameTask.getIssue().equals(issue)) {
+                                    task = maybeTheSameTask;
+                                    alreadyExists = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!alreadyExists) {
+                            task = new JiraTask(summary, issue, closed, lastUpdate, lastStatusSync);
+                        }
                         taskList.add(task);
                     }
                     jiraTasks.put(summary, taskList);
