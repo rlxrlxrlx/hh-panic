@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# defaults
+SSH_USER=arybalkin
+RELAY_HOST=oper.hh.ru
+TARGET_HOST=graylog1.hhnet.ru
+TARGET_FOLDER=/opt/graylog2-server/plugin/outputs
+
+JAVA_HOME=/opt/jdk7-1.7.0_60
+PATH=${JAVA_HOME}/bin:${JAVA_HOME}/jre/bin:${PATH}
+J2SDKDIR=${JAVA_HOME}
+J2REDIR=${JAVA_HOME}/jre
+
+# overrides for above defaults
 . ${HOME}/.config/.graylog-plugin-uploader.conf.bash
 
 PANIC_CHECKOUT_DIR=~/idea/hh-panic
